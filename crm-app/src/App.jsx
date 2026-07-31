@@ -210,7 +210,7 @@ export default function App() {
     setLoading(false);
   }
 
-  // ── SUPABASE REALTIME SUBSCRIPTIONS ──
+  // ── SUPABASE REALTIME SUBSCRIPTIONS & BROWSER VISIBILITY RE-SYNC ──
   useEffect(() => {
     const channel = supabase
       .channel('live-crm-updates')
@@ -221,7 +221,17 @@ export default function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'system_config' }, () => fetchAllData())
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchAllData(); // Instant re-sync when laptop wakes up or tab is focused!
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      supabase.removeChannel(channel);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // ── BUILD DAILY BATCH OBJECT ──

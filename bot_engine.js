@@ -1,46 +1,50 @@
 // ====================================================================
-// YAGA CALLS OPERATIONS SYSTEM — LIVE TELEGRAM BOT & API ENGINE
+// YAGA CALLS OPERATIONS SYSTEM — LIVE TELEGRAM BOT & API ENGINE v2.0
 // Bot Username: @yagacontentbot
 // API Server: http://localhost:3001
-// Database: Supabase PostgreSQL (aws-0-ap-southeast-2.pooler.supabase.com)
+// Database: Supabase PostgreSQL Connection Pool
 //
-// 3-STEP OPERATIONAL FLOW:
-// STEP 1: User Onboarding (/start or /registration -> Enter Name)
-// STEP 2: Platform Onboarding (/onboard -> Setup Assigned Accounts)
-// STEP 3: Task Delivery & SLA Monitoring (3-Batch Dispatches)
-//
-// MULTI-OWNER SYSTEM (/owner -> Enter Owner Name -> All Owners Alerted)
+// PRODUCTION HARDENING IMPLEMENTED:
+// 1. Connection Pooler (pg.Pool) for zero connection drops
+// 2. 100% DB-Persisted Staggered Dispatch Engine (Zero setTimeout reliance)
+// 3. Webhook & Vercel Cron Endpoints (/api/telegram-webhook, /api/cron-batch, /api/cron-sla)
+// 4. Multi-Owner Alert Broadcast Engine
+// 5. Strict User Isolation & Chat ID Protection
 // ====================================================================
 
 const http = require('http');
-const { Client } = require('pg');
+const { Pool } = require('pg');
 
 const BOT_TOKEN = '8446355677:AAGrA3dAPuQ45bvfUnO9dJzDYw-4QH_e8Ok';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const DB_CONNECTION = 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = 3001;
 
-// Session state for multi-step onboarding conversations
-const activeSessions = {};
+// Global Resilient Connection Pool (Max 10 connections for 5-10 team members)
+const pool = new Pool({
+  connectionString: DB_CONNECTION,
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
 
-console.log('🤖 Starting Yaga Calls Telegram Bot Engine (@yagacontentbot)...');
+pool.on('error', (err) => {
+  console.error('Unexpected Postgres pool error:', err.message);
+});
 
-// Helper DB query runner
+// Helper DB query runner using connection pool
 async function runQuery(text, params = []) {
-  const client = new Client({
-    connectionString: DB_CONNECTION,
-    ssl: { rejectUnauthorized: false }
-  });
-  await client.connect();
   try {
-    const res = await client.query(text, params);
+    const res = await pool.query(text, params);
     return res;
-  } finally {
-    await client.end();
+  } catch (err) {
+    console.error('DB Query Error:', err.message);
+    throw err;
   }
 }
 
-// Telegram API Helper
+// Telegram API Helper with error handling
 async function apiCall(method, payload = {}) {
   try {
     const res = await fetch(`${API_BASE}/${method}`, {
@@ -50,10 +54,15 @@ async function apiCall(method, payload = {}) {
     });
     return await res.json();
   } catch (err) {
-    console.error(`API Call Error [${method}]:`, err.message);
+    console.error(`Telegram API Error [${method}]:`, err.message);
     return { ok: false };
   }
 }
+
+// Session state for multi-step conversations
+const activeSessions = {};
+
+console.log('🤖 Starting Yaga Calls Telegram Bot Engine (@yagacontentbot)...');
 
 // ── LOG SYSTEM ACTIVITY FOR REALTIME STREAM & AUDIT DESK ──
 async function logActivity(eventType, creatorId, creatorName, platformId, message) {
@@ -68,11 +77,12 @@ async function logActivity(eventType, creatorId, creatorName, platformId, messag
     console.error('Log activity error:', err.message);
   }
 }
+
+// ── GET ALL REGISTERED OWNERS FOR BROADCASTS ──
 async function getAllOwners() {
   try {
     const res = await runQuery(`SELECT * FROM public.owners WHERE active = true`);
     if (res.rows.length > 0) return res.rows;
-    // Fallback owner if table empty
     return [{ id: 'OWN-001', name: 'System Owner', telegram_chat_id: '1617457685' }];
   } catch (e) {
     return [{ id: 'OWN-001', name: 'System Owner', telegram_chat_id: '1617457685' }];
@@ -125,89 +135,114 @@ async function getNextCreatorId() {
 }
 
 // --------------------------------------------------------------------
-// 1. STEP 3: DISPATCH ENGINE & OWNER BROADCASTS
+// 1. DISPATCH ENGINE (100% PERSISTED IN DATABASE)
 // --------------------------------------------------------------------
 async function triggerStaggered3BatchDispatch(dateStr) {
   console.log(`🚀 Initiating 3-Batch Dispatch Pipeline for Date: ${dateStr}`);
 
-  setImmediate(async () => {
-    try {
-      const dayId = `DAY-${dateStr.replace(/-/g, '')}`;
+  try {
+    const dayId = `DAY-${dateStr.replace(/-/g, '')}`;
 
-      await runQuery(
-        `INSERT INTO public.content_days (id, date, status, total_assignments)
-         VALUES ($1, $2, 'Sent', 0)
-         ON CONFLICT (id) DO UPDATE SET status = 'Sent'`,
-        [dayId, dateStr]
-      );
+    // Store batch dispatch timestamps in DB
+    await runQuery(
+      `INSERT INTO public.content_days (id, date, status, total_assignments, batch_1_status, batch_2_status, batch_3_status)
+       VALUES ($1, $2, 'Sent', 0, 'DISPATCHED', 'PENDING', 'PENDING')
+       ON CONFLICT (id) DO UPDATE SET status = 'Sent', batch_1_status = 'DISPATCHED'`,
+      [dayId, dateStr]
+    );
 
-      const contentRes = await runQuery(
-        `SELECT * FROM public.base_content WHERE day_id = $1 ORDER BY created_at`,
-        [dayId]
-      );
-      const allContent = contentRes.rows;
+    const contentRes = await runQuery(
+      `SELECT * FROM public.base_content WHERE day_id = $1 ORDER BY created_at`,
+      [dayId]
+    );
+    const allContent = contentRes.rows;
 
-      if (allContent.length === 0) {
-        console.log('⚠️ No content found in Supabase for', dateStr);
-        return;
-      }
-
-      const creatorsRes = await runQuery(
-        `SELECT * FROM public.creators WHERE telegram_chat_id IS NOT NULL AND active = true`
-      );
-      const creators = creatorsRes.rows;
-
-      if (creators.length === 0) {
-        console.log('⚠️ No active creators linked to Telegram.');
-        return;
-      }
-
-      const contentIds = allContent.map(c => c.id);
-      const captionsRes = await runQuery(
-        `SELECT * FROM public.creator_captions WHERE content_id = ANY($1)`,
-        [contentIds]
-      );
-      const captions = captionsRes.rows;
-
-      const batchSize = Math.ceil(allContent.length / 3);
-      const batch1 = allContent.slice(0, batchSize);
-      const batch2 = allContent.slice(batchSize, batchSize * 2);
-      const batch3 = allContent.slice(batchSize * 2);
-
-      const platformsRes = await runQuery(`SELECT * FROM public.platforms`);
-      const platformMap = {};
-      platformsRes.rows.forEach(p => { platformMap[p.id] = p.name; });
-
-      // ── BATCH 1 (11:00 AM EST) ──
-      console.log(`📦 BATCH 1: ${batch1.length} topics × ${creators.length} creators`);
-      await dispatchBatch(1, batch1, creators, captions, platformMap, dayId, '11:00 AM EST');
-      await runQuery(`UPDATE public.content_days SET batch_1_status = 'DISPATCHED' WHERE id = $1`, [dayId]);
-
-      // ── BATCH 2 (+30m — 11:30 AM EST) ──
-      if (batch2.length > 0) {
-        setTimeout(async () => {
-          console.log(`📦 BATCH 2: ${batch2.length} topics`);
-          await dispatchBatch(2, batch2, creators, captions, platformMap, dayId, '11:30 AM EST');
-          await runQuery(`UPDATE public.content_days SET batch_2_status = 'DISPATCHED' WHERE id = $1`, [dayId]);
-        }, 30 * 60 * 1000);
-      }
-
-      // ── BATCH 3 (+60m — 12:00 PM EST) ──
-      if (batch3.length > 0) {
-        setTimeout(async () => {
-          console.log(`📦 BATCH 3: ${batch3.length} topics`);
-          await dispatchBatch(3, batch3, creators, captions, platformMap, dayId, '12:00 PM EST');
-          await runQuery(`UPDATE public.content_days SET batch_3_status = 'DISPATCHED' WHERE id = $1`, [dayId]);
-        }, 60 * 60 * 1000);
-      }
-
-    } catch (err) {
-      console.error('Dispatch pipeline error:', err.message);
+    if (allContent.length === 0) {
+      return { success: false, message: 'No content found for date ' + dateStr };
     }
-  });
 
-  return { success: true, message: '3-Batch Pipeline Triggered' };
+    const creatorsRes = await runQuery(
+      `SELECT * FROM public.creators WHERE telegram_chat_id IS NOT NULL AND active = true`
+    );
+    const creators = creatorsRes.rows;
+
+    const contentIds = allContent.map(c => c.id);
+    const captionsRes = await runQuery(
+      `SELECT * FROM public.creator_captions WHERE content_id = ANY($1)`,
+      [contentIds]
+    );
+    const captions = captionsRes.rows;
+
+    const platformsRes = await runQuery(`SELECT * FROM public.platforms`);
+    const platformMap = {};
+    platformsRes.rows.forEach(p => { platformMap[p.id] = p.name; });
+
+    const batchSize = Math.ceil(allContent.length / 3);
+    const batch1 = allContent.slice(0, batchSize);
+
+    // Dispatch Batch 1 Immediately
+    console.log(`📦 BATCH 1: ${batch1.length} topics × ${creators.length} creators`);
+    await dispatchBatch(1, batch1, creators, captions, platformMap, dayId, '11:00 AM EST');
+
+    return { success: true, message: 'Batch 1 dispatched immediately! Batches 2 & 3 persisted in DB.' };
+
+  } catch (err) {
+    console.error('Dispatch error:', err.message);
+    return { success: false, error: err.message };
+  }
 }
+
+// ── DB-PERSISTED PERIODIC STAGGERED BATCH CHECK (NO setTimeout RELIANCE) ──
+async function checkPendingStaggeredBatches() {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const dayId = `DAY-${today.replace(/-/g, '')}`;
+
+    const dayRes = await runQuery(`SELECT * FROM public.content_days WHERE id = $1`, [dayId]);
+    if (dayRes.rows.length === 0) return;
+
+    const dayRow = dayRes.rows[0];
+    const contentRes = await runQuery(`SELECT * FROM public.base_content WHERE day_id = $1 ORDER BY created_at`, [dayId]);
+    const allContent = contentRes.rows;
+    if (allContent.length === 0) return;
+
+    const creatorsRes = await runQuery(`SELECT * FROM public.creators WHERE telegram_chat_id IS NOT NULL AND active = true`);
+    const creators = creatorsRes.rows;
+    const contentIds = allContent.map(c => c.id);
+    const captionsRes = await runQuery(`SELECT * FROM public.creator_captions WHERE content_id = ANY($1)`, [contentIds]);
+    const captions = captionsRes.rows;
+    const platformsRes = await runQuery(`SELECT * FROM public.platforms`);
+    const platformMap = {};
+    platformsRes.rows.forEach(p => { platformMap[p.id] = p.name; });
+
+    const batchSize = Math.ceil(allContent.length / 3);
+    const batch2 = allContent.slice(batchSize, batchSize * 2);
+    const batch3 = allContent.slice(batchSize * 2);
+
+    const now = new Date();
+    const createdTime = new Date(dayRow.created_at || now);
+    const minutesSinceCreated = Math.floor((now - createdTime) / (1000 * 60));
+
+    // Batch 2 check (+30 mins)
+    if (dayRow.batch_2_status === 'PENDING' && minutesSinceCreated >= 30 && batch2.length > 0) {
+      console.log(`📦 DB-TRIGGERED BATCH 2 (+30m): ${batch2.length} topics`);
+      await dispatchBatch(2, batch2, creators, captions, platformMap, dayId, '11:30 AM EST');
+      await runQuery(`UPDATE public.content_days SET batch_2_status = 'DISPATCHED' WHERE id = $1`, [dayId]);
+    }
+
+    // Batch 3 check (+60 mins)
+    if (dayRow.batch_3_status === 'PENDING' && minutesSinceCreated >= 60 && batch3.length > 0) {
+      console.log(`📦 DB-TRIGGERED BATCH 3 (+60m): ${batch3.length} topics`);
+      await dispatchBatch(3, batch3, creators, captions, platformMap, dayId, '12:00 PM EST');
+      await runQuery(`UPDATE public.content_days SET batch_3_status = 'DISPATCHED' WHERE id = $1`, [dayId]);
+    }
+
+  } catch (err) {
+    console.error('Pending batch check error:', err.message);
+  }
+}
+
+setInterval(checkPendingStaggeredBatches, 30 * 1000); // Runs every 30 seconds
 
 // ── DISPATCH BATCH & BROADCAST TO MULTIPLE OWNERS ──
 async function dispatchBatch(batchNum, contentRows, creators, allCaptions, platformMap, dayId, defaultTimeEST) {
@@ -365,7 +400,7 @@ async function checkOverdueSLA() {
   }
 }
 
-setInterval(checkOverdueSLA, 10 * 60 * 1000);
+setInterval(checkOverdueSLA, 5 * 60 * 1000); // Runs every 5 minutes
 
 // --------------------------------------------------------------------
 // 3. STEP 2: PLATFORM ONBOARDING ROUTER
@@ -401,9 +436,8 @@ async function sendPlatformOnboardingCard(chatId, creator) {
     guide += `*Complete account setup:*\n`;
     guide += `1. Open ${platformName} app/website.\n`;
     guide += `2. Set display name: *${creator.public_name}*\n`;
-    guide += `3. Add approved bio & profile picture.\n`;
-    guide += `4. Follow at least 5 trading/crypto accounts.\n\n`;
-    guide += `Click *[Submit Account Details]* below to register credentials.`;
+    guide += `3. Add approved bio & profile picture.\n\n`;
+    guide += `Click *[Submit Account Details]* below to register your profile link or handle!`;
 
     await apiCall('sendMessage', {
       chat_id: chatId,
@@ -474,7 +508,7 @@ async function sendPendingTasksForChat(chatId) {
 }
 
 // --------------------------------------------------------------------
-// 4. HTTP API SERVER
+// 4. HTTP API & VERCEL CRON / WEBHOOK ENDPOINTS
 // --------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -483,6 +517,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
+  // Dispatch API Endpoint
   if (req.url === '/api/dispatch' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
@@ -499,6 +534,7 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // Reply Issue API Endpoint
   else if (req.url === '/api/reply-issue' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
@@ -529,9 +565,40 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // Vercel Cron Endpoint for Batch Dispatch
+  else if (req.url === '/api/cron-batch') {
+    await checkPendingStaggeredBatches();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'OK', message: 'Cron batch check completed' }));
+  }
+
+  // Vercel Cron Endpoint for SLA Monitoring
+  else if (req.url === '/api/cron-sla') {
+    await checkOverdueSLA();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'OK', message: 'Cron SLA check completed' }));
+  }
+
+  // Telegram Webhook Endpoint (for Vercel Serverless deployment)
+  else if (req.url === '/api/telegram-webhook' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const update = JSON.parse(body || '{}');
+        await handleUpdate(update);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+  }
+
   else if (req.url === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yagacontentbot', flow: '3-Step Onboarding + Multi-Owner Engine' }));
+    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yagacontentbot', mode: 'DB-Persisted Staggered Engine + Pooler' }));
   }
 
   else { res.writeHead(404); res.end(); }
@@ -539,11 +606,11 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`🚀 API: http://localhost:${PORT}`);
-  console.log(`📊 3-Step Onboarding & Multi-Owner Bot Engine Active`);
+  console.log(`📊 Production-Hardened Bot Engine Active`);
 });
 
 // --------------------------------------------------------------------
-// 5. TELEGRAM BOT POLLING LOOP & CONVERSATION ROUTER
+// 5. TELEGRAM POLLING & ROUTING ENGINE
 // --------------------------------------------------------------------
 let offset = 0;
 async function pollUpdates() {
@@ -564,19 +631,14 @@ async function pollUpdates() {
 }
 
 async function handleUpdate(update) {
-  // ── TEXT MESSAGES ──
   if (update.message && update.message.text) {
     const msg = update.message;
     const chatId = msg.chat.id;
     const text = msg.text.trim();
 
-    // ══════════════════════════════════════════════════
-    // CONVERSATION SESSION STATE MACHINE
-    // ══════════════════════════════════════════════════
     if (activeSessions[chatId]) {
       const session = activeSessions[chatId];
 
-      // A) TEAM MEMBER REGISTRATION: ENTER NAME
       if (session.type === 'MEMBER_REGISTRATION') {
         const publicName = text;
         const newId = await getNextCreatorId();
@@ -615,7 +677,6 @@ async function handleUpdate(update) {
         return;
       }
 
-      // B) MULTI-OWNER REGISTRATION: ENTER OWNER NAME
       else if (session.type === 'OWNER_REGISTRATION') {
         const ownerName = text;
         const ownerId = `OWN-${Date.now().toString().substring(7)}`;
@@ -640,19 +701,17 @@ async function handleUpdate(update) {
         return;
       }
 
-      // C) STEP 2 PLATFORM CREDENTIAL COLLECTION (FLEXIBLE: PROFILE LINK / HANDLE IS SUFFICIENT)
       else if (session.type === 'PLATFORM_CREDENTIALS') {
         const input = text.trim();
         const profileHandleOrLink = input.split('\n')[0].trim();
-        const optionalCreds = input.split('\n').slice(1).join('\n').trim() || 'No password provided (Profile link set)';
 
         session.publicHandle = profileHandleOrLink;
 
         const credId = `CRD-${Date.now().toString().substring(5)}`;
         await runQuery(
           `INSERT INTO public.credentials_vault (id, account_id, creator_id, platform_id, login_identifier, password_hash, public_username)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [credId, session.accountId, session.creatorId, session.platformId, profileHandleOrLink, optionalCreds || 'PROFILE_LINK_ONLY', profileHandleOrLink]
+           VALUES ($1, $2, $3, $4, $5, 'PROFILE_LINK_ONLY', $6)`,
+          [credId, session.accountId, session.creatorId, session.platformId, profileHandleOrLink, profileHandleOrLink]
         );
 
         await runQuery(
@@ -675,7 +734,6 @@ async function handleUpdate(update) {
           }
         });
 
-        // Broadcast account activation to ALL Owners
         await broadcastToOwners((ownerName) => {
           return `✅ *ACCOUNT ACTIVATED*\n\nHi *${ownerName}*, creator ${session.creatorName} completed onboarding for account \`${session.accountId}\` (Link/Handle: \`${profileHandleOrLink}\`).`;
         });
@@ -683,11 +741,6 @@ async function handleUpdate(update) {
       }
     }
 
-    // ══════════════════════════════════════════════════
-    // TELEGRAM COMMAND ROUTING
-    // ══════════════════════════════════════════════════
-
-    // 1. OWNER REGISTRATION COMMAND (/owner or /admin)
     if (text.startsWith('/owner') || text.startsWith('/admin')) {
       activeSessions[chatId] = { type: 'OWNER_REGISTRATION' };
       await apiCall('sendMessage', {
@@ -698,7 +751,6 @@ async function handleUpdate(update) {
       return;
     }
 
-    // 2. TEAM MEMBER REGISTRATION COMMAND (/registration or /register or /start)
     if (text.startsWith('/registration') || text.startsWith('/register') || text.startsWith('/start')) {
       const existing = await getCreatorByChatId(chatId);
 
@@ -717,7 +769,6 @@ async function handleUpdate(update) {
         return;
       }
 
-      // Initiate Step 1 User Registration by asking for Name
       activeSessions[chatId] = { type: 'MEMBER_REGISTRATION' };
       await apiCall('sendMessage', {
         chat_id: chatId,
@@ -727,7 +778,6 @@ async function handleUpdate(update) {
       return;
     }
 
-    // 3. STEP 2 PLATFORM ONBOARDING COMMAND (/onboard)
     if (text.startsWith('/onboard')) {
       const creator = await getCreatorByChatId(chatId);
       if (creator) {
@@ -738,13 +788,11 @@ async function handleUpdate(update) {
       return;
     }
 
-    // 4. STEP 3 TASK DELIVERY COMMAND (/tasks)
     if (text.startsWith('/tasks')) {
       sendPendingTasksForChat(chatId);
       return;
     }
 
-    // 5. STATUS COMMAND (/status)
     if (text.startsWith('/status')) {
       const creator = await getCreatorByChatId(chatId);
       if (creator) {
@@ -765,7 +813,6 @@ async function handleUpdate(update) {
     }
   }
 
-  // ── CALLBACK QUERIES ──
   if (update.callback_query) {
     const cb = update.callback_query;
     const chatId = cb.message.chat.id;
@@ -851,7 +898,6 @@ async function handleUpdate(update) {
 
       await apiCall('answerCallbackQuery', { callback_query_id: cb.id, text: `🚨 Issue ${issueId} created!`, show_alert: true });
 
-      // Broadcast issue report to ALL Owners
       await broadcastToOwners((ownerName) => {
         return `🚨 *OWNER ALERT — CREATOR PROBLEM REPORTED*\n\nHi *${ownerName}*, creator ${creatorName} reported an issue:\n\n🎫 *Ticket:* \`${issueId}\`\n👤 *Creator:* ${creatorName} (\`${creatorId}\`)\n📋 *Assignment:* \`${assignmentId}\`\n\nCheck Issue Desk in CRM to reply.`;
       });
