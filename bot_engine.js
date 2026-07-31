@@ -640,66 +640,46 @@ async function handleUpdate(update) {
         return;
       }
 
-      // C) STEP 2 PLATFORM CREDENTIAL COLLECTION
+      // C) STEP 2 PLATFORM CREDENTIAL COLLECTION (FLEXIBLE: PROFILE LINK / HANDLE IS SUFFICIENT)
       else if (session.type === 'PLATFORM_CREDENTIALS') {
-        if (session.step === 'AWAITING_LOGIN') {
-          session.loginIdentifier = text;
-          session.step = 'AWAITING_PASSWORD';
-          await apiCall('sendMessage', {
-            chat_id: chatId,
-            text: `🔐 *Step 2 of 3:* Send the account password.\n\n_(Saved securely in encrypted database vault; never repeated in plaintext)_`,
-            parse_mode: 'Markdown'
-          });
-          return;
-        }
+        const input = text.trim();
+        const profileHandleOrLink = input.split('\n')[0].trim();
+        const optionalCreds = input.split('\n').slice(1).join('\n').trim() || 'No password provided (Profile link set)';
 
-        else if (session.step === 'AWAITING_PASSWORD') {
-          session.password = text;
-          session.step = 'AWAITING_HANDLE';
-          await apiCall('sendMessage', {
-            chat_id: chatId,
-            text: `🏷 *Step 3 of 3:* Send the final public username/handle (e.g. \`@crypto_trader\`).`,
-            parse_mode: 'Markdown'
-          });
-          return;
-        }
+        session.publicHandle = profileHandleOrLink;
 
-        else if (session.step === 'AWAITING_HANDLE') {
-          session.publicHandle = text;
+        const credId = `CRD-${Date.now().toString().substring(5)}`;
+        await runQuery(
+          `INSERT INTO public.credentials_vault (id, account_id, creator_id, platform_id, login_identifier, password_hash, public_username)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [credId, session.accountId, session.creatorId, session.platformId, profileHandleOrLink, optionalCreds || 'PROFILE_LINK_ONLY', profileHandleOrLink]
+        );
 
-          const credId = `CRD-${Date.now().toString().substring(5)}`;
-          await runQuery(
-            `INSERT INTO public.credentials_vault (id, account_id, creator_id, platform_id, login_identifier, password, public_handle, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'Stored')`,
-            [credId, session.accountId, session.creatorId, session.platformId, session.loginIdentifier, session.password, session.publicHandle]
-          );
+        await runQuery(
+          `UPDATE public.accounts SET posting_ready = true, status = 'Active', handle = $1 WHERE id = $2`,
+          [profileHandleOrLink, session.accountId]
+        );
 
-          await runQuery(
-            `UPDATE public.accounts SET posting_ready = true, status = 'Active', handle = $1 WHERE id = $2`,
-            [session.publicHandle, session.accountId]
-          );
+        delete activeSessions[chatId];
+        logActivity('PLATFORM_ONBOARD', session.creatorId, session.creatorName, session.platformId, `✅ ${session.creatorName || 'Creator'} completed platform setup for ${profileHandleOrLink} (${session.accountId}).`);
 
-          delete activeSessions[chatId];
-          logActivity('PLATFORM_ONBOARD', session.creatorId, session.creatorName, session.platformId, `✅ ${session.creatorName || 'Creator'} completed platform setup for ${session.publicHandle || 'account'} (${session.accountId}).`);
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `🎉 *STEP 2 PLATFORM ONBOARDING COMPLETED!*\n\nAccount \`${profileHandleOrLink}\` is now active & posting ready!\n\nUse /onboard to setup next platform or /tasks to view assignments.`,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🌐 Setup Next Platform', callback_data: 'start_platform_setup' }],
+              [{ text: '📋 View My Tasks', callback_data: 'view_tasks' }]
+            ]
+          }
+        });
 
-          await apiCall('sendMessage', {
-            chat_id: chatId,
-            text: `🎉 *STEP 2 PLATFORM ONBOARDING COMPLETED!*\n\nAccount \`${text}\` is now active & posting ready!\n\nUse /onboard to setup next platform or /tasks to view assignments.`,
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '🌐 Setup Next Platform', callback_data: 'start_platform_setup' }],
-                [{ text: '📋 View My Tasks', callback_data: 'view_tasks' }]
-              ]
-            }
-          });
-
-          // Broadcast account activation to ALL Owners
-          await broadcastToOwners((ownerName) => {
-            return `✅ *ACCOUNT ACTIVATED*\n\nHi *${ownerName}*, creator ${session.creatorName} completed onboarding for account \`${session.accountId}\` (Handle: \`${text}\`).`;
-          });
-          return;
-        }
+        // Broadcast account activation to ALL Owners
+        await broadcastToOwners((ownerName) => {
+          return `✅ *ACCOUNT ACTIVATED*\n\nHi *${ownerName}*, creator ${session.creatorName} completed onboarding for account \`${session.accountId}\` (Link/Handle: \`${profileHandleOrLink}\`).`;
+        });
+        return;
       }
     }
 
@@ -823,7 +803,7 @@ async function handleUpdate(update) {
       await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
       await apiCall('sendMessage', {
         chat_id: chatId,
-        text: `🔐 *Step 1 of 3:* Send the login email, phone number, or username used for this account.`,
+        text: `🌐 *PLATFORM ONBOARDING:*\n\nSend your public profile link or handle (e.g. \`https://x.com/afraim_official\` or \`@afraim_official\`).\n\n_(Optionally add login credentials on a new line if managed centrally)_`,
         parse_mode: 'Markdown'
       });
 
