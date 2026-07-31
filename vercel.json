@@ -1,5 +1,4 @@
 {
-  "version": 2,
   "buildCommand": "cd crm-app && npm run build",
   "outputDirectory": "crm-app/dist",
   "crons": [
@@ -14,27 +13,7 @@
   ],
   "rewrites": [
     {
-      "source": "/api/telegram-webhook",
-      "destination": "/api/telegram-webhook.js"
-    },
-    {
-      "source": "/api/cron-batch",
-      "destination": "/api/cron-batch.js"
-    },
-    {
-      "source": "/api/cron-sla",
-      "destination": "/api/cron-sla.js"
-    },
-    {
-      "source": "/api/dispatch",
-      "destination": "/api/dispatch.js"
-    },
-    {
-      "source": "/api/reply-issue",
-      "destination": "/api/reply-issue.js"
-    },
-    {
-      "source": "/((?!api/).*)",
+      "source": "/((?!api/|assets|favicon).*)",
       "destination": "/index.html"
     }
   ]

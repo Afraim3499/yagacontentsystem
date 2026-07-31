@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron-batch",
+      "schedule": "*/1 * * * *"
+    },
+    {
+      "path": "/api/cron-sla",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
