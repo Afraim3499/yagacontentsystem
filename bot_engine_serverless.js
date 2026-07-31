@@ -3,6 +3,7 @@
 // Dual Compatible: Works with both Vercel Serverless & Local Engine
 // ====================================================================
 
+try { require('dotenv').config(); } catch(e) {}
 const { Pool } = require('pg');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
