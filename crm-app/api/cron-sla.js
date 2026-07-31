@@ -1,4 +1,4 @@
-const { checkOverdueSLA } = require('../../bot_engine_serverless');
+const { checkOverdueSLA } = require('../bot_engine_serverless');
 
 module.exports = async (req, res) => {
   try {

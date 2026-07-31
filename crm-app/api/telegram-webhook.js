@@ -1,5 +1,4 @@
-// Vercel Serverless Function: Telegram Webhook Handler
-const { handleUpdate } = require('../../bot_engine_serverless');
+const { handleUpdate } = require('../bot_engine_serverless');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');

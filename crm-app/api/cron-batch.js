@@ -1,4 +1,4 @@
-const { checkPendingStaggeredBatches } = require('../../bot_engine_serverless');
+const { checkPendingStaggeredBatches } = require('../bot_engine_serverless');
 
 module.exports = async (req, res) => {
   try {

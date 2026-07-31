@@ -1,4 +1,4 @@
-const { replyToIssue } = require('../../bot_engine_serverless');
+const { replyToIssue } = require('../bot_engine_serverless');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
