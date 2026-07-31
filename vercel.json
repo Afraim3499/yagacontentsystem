@@ -1,8 +1,38 @@
 {
-  "buildCommand": "cd crm-app && npm install && npm run build",
+  "version": 2,
+  "buildCommand": "cd crm-app && npm run build",
   "outputDirectory": "crm-app/dist",
-  "framework": "vite",
+  "crons": [
+    {
+      "path": "/api/cron-batch",
+      "schedule": "*/1 * * * *"
+    },
+    {
+      "path": "/api/cron-sla",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
+    {
+      "source": "/api/telegram-webhook",
+      "destination": "/api/telegram-webhook"
+    },
+    {
+      "source": "/api/cron-batch",
+      "destination": "/api/cron-batch"
+    },
+    {
+      "source": "/api/cron-sla",
+      "destination": "/api/cron-sla"
+    },
+    {
+      "source": "/api/dispatch",
+      "destination": "/api/dispatch"
+    },
+    {
+      "source": "/api/reply-issue",
+      "destination": "/api/reply-issue"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
