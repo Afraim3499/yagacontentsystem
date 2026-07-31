@@ -74,7 +74,7 @@ setInterval(checkPendingStaggeredBatches, 30 * 1000);
 setInterval(checkOverdueSLA, 5 * 60 * 1000);
 
 // Telegram Long Polling for Local Dev
-const BOT_TOKEN = '8446355677:AAGrA3dAPuQ45bvfUnO9dJzDYw-4QH_e8Ok';
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 let offset = 0;

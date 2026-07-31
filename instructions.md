@@ -92,7 +92,7 @@ The core blueprint has been decomposed into modular, isolated specifications wit
 - **2026-07-30:** Installed Supabase agent skills (`supabase/agent-skills`) into workspace.
 - **2026-07-30:** Connected directly to live Supabase PostgreSQL database (`aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres`) and executed full SQL Schema Migration (`supabase_schema.sql`).
 - **2026-07-30:** Created all 13 production tables: `creators`, `voice_profiles`, `platforms`, `accounts`, `credentials_vault` (with RLS), `platform_playbooks`, `content_days`, `base_content`, `creator_captions`, `assignment_queue`, `engagement_requirements`, `issue_tickets`, `referral_conversions`, along with initial seed data!
-- **2026-07-30:** Connected official Telegram Bot (`@yagacontentbot`, Token: `8446355677:AAGrA3dAPuQ45bvfUnO9dJzDYw-4QH_e8Ok`) and launched live Telegram Bot Engine (`bot_engine.js`) background service connected to Supabase DB!
+- **2026-07-30:** Connected official Telegram Bot (`@yagacontentbot`) and launched live Telegram Bot Engine (`bot_engine.js`) background service connected to Supabase DB!
 - **2026-07-30:** Built and launched Telegram Deep-Link Referral Attribution Engine (`t.me/yagacontentbot?start=ref_...`) recording clicks, free group joins, and $100 VIP conversions in Supabase database!
 
 ---
@@ -135,7 +135,7 @@ The core blueprint has been decomposed into modular, isolated specifications wit
 - [x] Connect `crm-app` frontend to read/write directly from Supabase database instead of mock data.
 
 ### Task Group 2: Telegram Bot Engine & Webhook Routing
-- [x] Obtain Bot Token from Telegram `@BotFather` (`8446355677:AAGrA3dAPuQ45bvfUnO9dJzDYw-4QH_e8Ok`).
+- [x] Obtain Bot Token from Telegram `@BotFather`.
 - [x] Build Telegram Webhook & Polling Server (`bot_engine.js`) connected to Supabase.
 - [x] Implement `/start` command for creator registration and automatic Telegram Chat ID mapping.
 - [x] Build Onboarding Router: Deliver unified 1-message platform setup instruction, collect minimal credentials, store in vault, and trigger auto-activation.

@@ -5,7 +5,7 @@
 
 const { Pool } = require('pg');
 
-const BOT_TOKEN = '8446355677:AAGrA3dAPuQ45bvfUnO9dJzDYw-4QH_e8Ok';
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const DB_CONNECTION = 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 

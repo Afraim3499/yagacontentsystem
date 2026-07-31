@@ -101,7 +101,7 @@ npm run dev
 ### Issue 1: Telegram Bot Not Responding
 - Verify Node process is running (`node bot_engine.js`).
 - Test API health endpoint: `http://localhost:3001/api/health`.
-- Check Telegram bot token in `bot_engine.js` (`8446355677:AAGrA3dAPuQ45bvf...`).
+- Check Telegram bot token environment variable (`TELEGRAM_BOT_TOKEN`).
 
 ### Issue 2: Website Not Updating in Realtime
 - Check browser console for Supabase WebSocket connection status.
