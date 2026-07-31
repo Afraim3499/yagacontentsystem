@@ -1,0 +1,139 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* Official Yaga Calls Color System */
+  --bg-dark: #090c10;           /* Deep Dark Canvas */
+  --bg-surface: #121720;        /* Card Container */
+  --bg-surface-hover: #19202d;
+  --bg-input: #0a0e17;
+  
+  --color-gold: #e39e2e;        /* Official Yaga Gold */
+  --color-gold-hover: #f0b248;
+  --color-gold-light: rgba(227, 158, 46, 0.15);
+  
+  --color-emerald: #00d294;     /* Signal Green */
+  --color-cyan: #38bdf8;        /* Cyan Highlight */
+  --color-[#a7b0c0]: #a7b0c0;      /* Muted Text */
+  --color-[#eaf2ff]: #eaf2ff;      /* High Contrast Text */
+  
+  --border-line: rgba(255, 255, 255, 0.08);
+  --border-gold: rgba(227, 158, 46, 0.35);
+  
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-dark);
+  color: var(--color-[#eaf2ff]);
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-image: 
+    radial-gradient(circle at 10% 10%, rgba(227, 158, 46, 0.12) 0%, transparent 40%),
+    radial-gradient(circle at 90% 10%, rgba(56, 189, 248, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 50% 90%, rgba(18, 23, 32, 0.95) 0%, transparent 60%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Glass Panels */
+.glass-panel {
+  background: rgba(18, 23, 32, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-line);
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.6);
+  border-radius: 18px;
+}
+
+.glass-card-interactive {
+  background: rgba(18, 23, 32, 0.7);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border-line);
+  border-radius: 16px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card-interactive:hover {
+  background: rgba(25, 32, 45, 0.9);
+  border-color: var(--border-gold);
+  transform: translateY(-2px);
+  box-shadow: 0 20px 40px -12px rgba(227, 158, 46, 0.22);
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 9999px;
+  font-size: 0.725rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge-gold {
+  background: rgba(227, 158, 46, 0.15);
+  color: #e39e2e;
+  border: 1px solid rgba(227, 158, 46, 0.35);
+}
+
+.badge-emerald {
+  background: rgba(0, 210, 148, 0.15);
+  color: #00d294;
+  border: 1px solid rgba(0, 210, 148, 0.35);
+}
+
+.badge-cyan {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.badge-rose {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+/* Yaga Gold Action Button */
+.grad-button {
+  background: linear-gradient(135deg, #e39e2e 0%, #f0b248 100%);
+  color: #090c10;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 20px rgba(227, 158, 46, 0.35);
+  transition: all 0.2s ease;
+}
+
+.grad-button:hover {
+  box-shadow: 0 0 30px rgba(227, 158, 46, 0.55);
+  transform: translateY(-1px);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090c10;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(227, 158, 46, 0.4);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #e39e2e;
+}

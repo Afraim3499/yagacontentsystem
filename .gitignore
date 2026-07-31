@@ -1,0 +1,18 @@
+# Credentials & Secrets (Never commit)
+*no index*
+*no-index*
+*.env
+*.env.*
+*credentials*
+
+# Node modules
+node_modules/
+crm-app/node_modules/
+
+# Logs & System directories
+*.log
+.system_generated/
+
+# OS files
+.DS_Store
+Thumbs.db

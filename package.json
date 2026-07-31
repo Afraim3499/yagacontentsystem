@@ -1,0 +1,16 @@
+{
+  "name": "yagacallls-content-operation",
+  "version": "1.0.0",
+  "main": "run_migration.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "node-telegram-bot-api": "^1.2.0",
+    "pg": "^8.22.0"
+  }
+}
