@@ -2,6 +2,12 @@
   "version": 2,
   "buildCommand": "cd crm-app && npm run build",
   "outputDirectory": "crm-app/dist",
+  "functions": {
+    "api/*.js": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  },
   "crons": [
     {
       "path": "/api/cron-batch",
@@ -12,10 +18,17 @@
       "schedule": "*/5 * * * *"
     }
   ],
-  "rewrites": [
+  "routes": [
     {
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
+      "src": "/api/(.*)",
+      "dest": "/api/$1.js"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }
