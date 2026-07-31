@@ -1,6 +1,18 @@
 {
-  "buildCommand": "cd crm-app && npm run build",
-  "outputDirectory": "crm-app/dist",
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "crm-app/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
   "crons": [
     {
       "path": "/api/cron-batch",
@@ -11,10 +23,17 @@
       "schedule": "*/5 * * * *"
     }
   ],
-  "rewrites": [
+  "routes": [
     {
-      "source": "/((?!api/|assets|favicon).*)",
-      "destination": "/index.html"
+      "src": "/api/(.*)",
+      "dest": "/api/$1.js"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/crm-app/$1"
     }
   ]
 }
