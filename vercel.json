@@ -14,27 +14,7 @@
   ],
   "rewrites": [
     {
-      "source": "/api/telegram-webhook",
-      "destination": "/api/telegram-webhook"
-    },
-    {
-      "source": "/api/cron-batch",
-      "destination": "/api/cron-batch"
-    },
-    {
-      "source": "/api/cron-sla",
-      "destination": "/api/cron-sla"
-    },
-    {
-      "source": "/api/dispatch",
-      "destination": "/api/dispatch"
-    },
-    {
-      "source": "/api/reply-issue",
-      "destination": "/api/reply-issue"
-    },
-    {
-      "source": "/(.*)",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
