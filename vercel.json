@@ -1,0 +1,11 @@
+{
+  "buildCommand": "cd crm-app && npm install && npm run build",
+  "outputDirectory": "crm-app/dist",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

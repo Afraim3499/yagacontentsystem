@@ -14,8 +14,8 @@
   
   --color-emerald: #00d294;     /* Signal Green */
   --color-cyan: #38bdf8;        /* Cyan Highlight */
-  --color-[#a7b0c0]: #a7b0c0;      /* Muted Text */
-  --color-[#eaf2ff]: #eaf2ff;      /* High Contrast Text */
+  --color-muted: #a7b0c0;       /* Muted Text */
+  --color-text: #eaf2ff;        /* High Contrast Text */
   
   --border-line: rgba(255, 255, 255, 0.08);
   --border-gold: rgba(227, 158, 46, 0.35);
@@ -31,7 +31,7 @@
 body {
   font-family: var(--font-sans);
   background-color: var(--bg-dark);
-  color: var(--color-[#eaf2ff]);
+  color: var(--color-text);
   min-height: 100vh;
   overflow-x: hidden;
   background-image: 
