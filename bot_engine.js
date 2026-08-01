@@ -73,25 +73,56 @@ server.listen(PORT, () => {
 setInterval(checkPendingStaggeredBatches, 30 * 1000);
 setInterval(checkOverdueSLA, 5 * 60 * 1000);
 
-// Telegram Long Polling for Local Dev
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+// Telegram Bot Credentials
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8446355677:AAGln29V9MXOifeJc5NBZT0Dn68Z8innrQw';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
+
+// Set Telegram Bot Official Command Menu (Public Creator Commands Only)
+async function registerBotCommands() {
+  try {
+    const commands = [
+      { command: 'start', description: '⚡️ Open Main Menu & Buttons' },
+      { command: 'register', description: '✍️ Register as Team Creator' },
+      { command: 'tasks', description: '📋 View My Daily Assignments' },
+      { command: 'onboard', description: '🌐 Setup Target Platform Accounts' },
+      { command: 'issue', description: '⚠️ Report a Platform Problem' }
+    ];
+    const res = await fetch(`${API_BASE}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands })
+    }).then(r => r.json());
+    console.log('✅ Registered Telegram Bot Command Menu:', res);
+  } catch (err) {
+    console.error('Failed to set bot commands:', err.message);
+  }
+}
 
 let offset = 0;
 async function pollUpdates() {
+  await registerBotCommands();
+  console.log('🚀 Telegram Long Polling Active! Listening for creator updates...');
   while (true) {
     try {
       const res = await fetch(`${API_BASE}/getUpdates?offset=${offset}&timeout=30`).then(r => r.json());
       if (res.ok && res.result && res.result.length > 0) {
         for (const update of res.result) {
           offset = update.update_id + 1;
-          handleUpdate(update);
+          console.log(`📩 Incoming Update [${update.update_id}]:`, update.message?.text || update.callback_query?.data || 'Event');
+          try {
+            await handleUpdate(update);
+          } catch (handlerErr) {
+            console.error('❌ Error handling update:', handlerErr.message);
+          }
         }
       }
     } catch (err) {
+      console.error('Polling error:', err.message);
       await new Promise(r => setTimeout(r, 3000));
     }
   }
 }
 
 pollUpdates();
+
+

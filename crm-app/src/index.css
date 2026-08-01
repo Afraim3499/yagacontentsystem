@@ -137,3 +137,25 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #e39e2e;
 }
+
+/* News Marquee Crawler */
+@keyframes tickerCrawler {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-ticker {
+  display: inline-block;
+  white-space: nowrap;
+  animation: tickerCrawler 18s linear infinite;
+  will-change: transform;
+}
+
+.animate-ticker:hover {
+  animation-play-state: paused;
+}
+

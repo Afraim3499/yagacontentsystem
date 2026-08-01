@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, Send, Clock, Activity, AlertTriangle, Radio } from 'lucide-react';
+import { Zap, Send, Clock, Activity, AlertTriangle, Radio, Menu, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-export default function Navbar({ systemSettings, activeBatch }) {
+export default function Navbar({ systemSettings, activeBatch, mobileMenuOpen, setMobileMenuOpen }) {
   const [tickerHeadlines, setTickerHeadlines] = useState([
     "⚡️ Yaga Calls Command Center Active • Realtime Monitoring Live",
     "📢 3-Batch Staggered Window: 11:00 AM - 02:00 PM EST",
@@ -67,46 +67,51 @@ export default function Navbar({ systemSettings, activeBatch }) {
   const b3Label = b3.length === 0 ? 'Pending' : `${b3Pct}%`;
 
   return (
-    <header className="glass-panel sticky top-0 z-40 px-6 py-3.5 mb-6 flex items-center justify-between border-b border-white/10 rounded-none border-x-0 border-t-0 bg-[#0f141d]/95 backdrop-blur-md">
-      {/* Left Brand Logo */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#e39e2e] to-[#d5b895] flex items-center justify-center shadow-lg shadow-[#e39e2e]/25 text-[#0b0e14]">
-            <Zap className="w-5 h-5 fill-current" />
+    <header className="glass-panel sticky top-0 z-40 px-3.5 sm:px-6 py-3 mb-4 sm:mb-6 flex items-center justify-between border-b border-white/10 rounded-none border-x-0 border-t-0 bg-[#0f141d]/95 backdrop-blur-md">
+      {/* Left Brand Logo & Mobile Toggle */}
+      <div className="flex items-center gap-3">
+        <button 
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="md:hidden p-2 rounded-xl bg-slate-800/80 border border-white/10 text-slate-200 hover:text-white"
+          aria-label="Toggle Navigation Menu"
+        >
+          {mobileMenuOpen ? <X className="w-5 h-5 text-[#e39e2e]" /> : <Menu className="w-5 h-5 text-slate-200" />}
+        </button>
+
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-[#e39e2e] to-[#d5b895] flex items-center justify-center shadow-lg shadow-[#e39e2e]/25 text-[#0b0e14]">
+            <Zap className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
           </div>
           <div>
-            <h1 className="text-lg font-black tracking-tight text-white flex items-center gap-2 uppercase">
+            <h1 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5 sm:gap-2 uppercase">
               YAGA CALLS
-              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-[#e39e2e]/20 text-[#e39e2e] border border-[#e39e2e]/35">
-                CRM v2.0
+              <span className="text-[9px] sm:text-[10px] font-extrabold px-1.5 sm:px-2 py-0.5 rounded-md bg-[#e39e2e]/20 text-[#e39e2e] border border-[#e39e2e]/35">
+                CRM
               </span>
             </h1>
-            <p className="text-xs text-slate-400 font-medium">Chief System Engineering Command Center</p>
+            <p className="text-[10px] sm:text-xs text-slate-400 font-medium hidden xs:block">Chief System Command</p>
           </div>
         </div>
       </div>
 
-      {/* Center: Live Running Operations News Ticker Banner */}
-      <div className="flex-1 max-w-xl mx-6 hidden xl:block">
-        <div className="bg-[#080a0f] p-2 rounded-xl border border-white/10 flex items-center gap-3 relative overflow-hidden shadow-inner">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#e39e2e]/20 text-[#e39e2e] border border-[#e39e2e]/40 text-[10px] font-black uppercase tracking-wider shrink-0">
+      {/* Center: Live Running Operations News Ticker Banner (Fixed Width TV News Crawler) */}
+      <div className="w-[480px] shrink-0 mx-4 hidden xl:block">
+        <div className="bg-[#080a0f] h-10 px-3 rounded-xl border border-white/10 flex items-center gap-3 relative overflow-hidden shadow-inner">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#e39e2e]/20 text-[#e39e2e] border border-[#e39e2e]/40 text-[10px] font-black uppercase tracking-wider shrink-0 z-10 shadow-md">
             <Radio className="w-3 h-3 text-[#e39e2e] animate-pulse" />
             LIVE TICKER
           </div>
 
-          <div className="flex-1 overflow-hidden h-5 relative flex items-center">
-            <div 
-              key={tickerIndex} 
-              className="text-xs font-mono font-bold text-slate-200 truncate transition-all duration-500 animate-fadeIn"
-            >
-              {tickerHeadlines[tickerIndex] || "⚡️ Operations System Live"}
+          <div className="flex-1 overflow-hidden h-full relative flex items-center">
+            <div className="animate-ticker text-xs font-mono font-bold text-slate-200">
+              {tickerHeadlines.join("   •   ") || "⚡️ Operations System Live • Realtime Monitoring Active"}
             </div>
           </div>
         </div>
       </div>
 
       {/* Right Controls & Batch Status */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4">
         {/* Live Staggered Batch Progress Gauge */}
         <div className="hidden lg:flex items-center gap-3 px-4 py-1.5 rounded-xl bg-[#080a0f] border border-white/10 text-xs">
           <Clock className="w-4 h-4 text-[#e39e2e]" />
@@ -123,17 +128,17 @@ export default function Navbar({ systemSettings, activeBatch }) {
         </div>
 
         {/* Telegram Bot Username Badge */}
-        <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#e39e2e]/10 border border-[#e39e2e]/30 text-[#e39e2e] text-xs font-bold">
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#e39e2e]/10 border border-[#e39e2e]/30 text-[#e39e2e] text-xs font-bold">
           <Send className="w-3.5 h-3.5" />
           <span>{systemSettings.botUsername}</span>
         </div>
 
         {/* Profile Avatar */}
-        <div className="flex items-center gap-2.5 pl-2 border-l border-white/10">
+        <div className="flex items-center gap-2 pl-2 border-l border-white/10">
           <div className="w-8 h-8 rounded-full bg-[#121722] border border-[#e39e2e]/40 flex items-center justify-center text-xs font-black text-[#e39e2e]">
             YC
           </div>
-          <div className="hidden sm:block text-left">
+          <div className="hidden md:block text-left">
             <div className="text-xs font-bold text-white">Yaga Owner</div>
             <div className="text-[10px] text-slate-400 font-medium">Chief Engineer</div>
           </div>
@@ -142,3 +147,4 @@ export default function Navbar({ systemSettings, activeBatch }) {
     </header>
   );
 }
+

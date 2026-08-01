@@ -345,6 +345,15 @@ async function handleUpdate(update) {
     if (activeSessions[chatId]) {
       const session = activeSessions[chatId];
       if (session.type === 'MEMBER_REGISTRATION') {
+        if (text.startsWith('/')) {
+          await apiCall('sendMessage', { 
+            chat_id: chatId, 
+            text: `⚠️ *INVALID NAME:* Please reply with your actual **Display Name** (e.g. *Alex Vance* or *Crypto Analyst*), not a bot command.`, 
+            parse_mode: 'Markdown' 
+          });
+          return;
+        }
+
         const publicName = text;
         const newId = await getNextCreatorId();
         const handle = msg.from.username ? `@${msg.from.username}` : `@user_${chatId}`;
@@ -355,14 +364,32 @@ async function handleUpdate(update) {
            ON CONFLICT (telegram_chat_id) DO UPDATE SET public_name = $3, real_name = $2`,
           [newId, publicName, publicName, handle, chatId.toString()]
         );
+
+        // Auto-create pending accounts for default active platforms
+        try {
+          const platformsRes = await runQuery(`SELECT id, name FROM public.platforms`);
+          for (const p of (platformsRes.rows || [])) {
+            const accountId = `AC-${p.id.replace('PL-','')}-${newId.replace('CR-','CR')}`;
+            const defaultHandle = `@${publicName.replace(/\s+/g, '_').toLowerCase()}_${p.name.split(' ')[0].toLowerCase()}`;
+            await runQuery(
+              `INSERT INTO public.accounts (id, creator_id, platform_id, handle, status, posting_ready)
+               VALUES ($1, $2, $3, $4, 'Pending', false)
+               ON CONFLICT (id) DO NOTHING`,
+              [accountId, newId, p.id, defaultHandle]
+            );
+          }
+        } catch (accErr) {
+          console.error('Error auto-creating accounts:', accErr);
+        }
+
         delete activeSessions[chatId];
         logActivity('ONBOARDING', newId, publicName, null, `⚡️ ${publicName} registered on Telegram (${newId}).`);
 
         await apiCall('sendMessage', {
           chat_id: chatId,
-          text: `⚡️ *USER ONBOARDED!* Hello *${publicName}* (\`${newId}\`).\n\nClick below to setup platforms:`,
+          text: `🎉 *CREATOR REGISTRATION COMPLETE!*\n\nHello *${publicName}* (\`${newId}\`)! You are registered on Yaga Calls.\n\nNext step: Click **[🌐 Setup Platforms]** below to submit your target social media handles/links.`,
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[{ text: '🌐 2. Setup Platforms', callback_data: 'start_platform_setup' }]] }
+          reply_markup: creatorKeyboard
         });
         return;
       }
@@ -394,23 +421,91 @@ async function handleUpdate(update) {
 
     if (text.startsWith('/owner') || text.startsWith('/admin')) {
       activeSessions[chatId] = { type: 'OWNER_REGISTRATION' };
-      await apiCall('sendMessage', { chat_id: chatId, text: `👑 *OWNER REGISTRATION:* Send your full name:`, parse_mode: 'Markdown' });
+      await apiCall('sendMessage', { 
+        chat_id: chatId, 
+        text: `👑 *OWNER REGISTRATION:* Send your full display name:`, 
+        parse_mode: 'Markdown' 
+      });
+      return;
     }
-    else if (text.startsWith('/registration') || text.startsWith('/register') || text.startsWith('/start')) {
+
+    const creatorKeyboard = {
+      keyboard: [
+        [{ text: '✍️ Register as Creator' }, { text: '📋 My Daily Tasks' }],
+        [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
+      ],
+      resize_keyboard: true,
+      persistent: true
+    };
+
+    if (text.includes('Register as Creator') || text.startsWith('/registration') || text.startsWith('/register')) {
       const existing = await getCreatorByChatId(chatId);
       if (existing) {
-        await apiCall('sendMessage', { chat_id: chatId, text: `⚡️ Welcome back, *${existing.public_name}*!`, parse_mode: 'Markdown' });
+        await apiCall('sendMessage', { 
+          chat_id: chatId, 
+          text: `⚡️ Welcome back, *${existing.public_name}*!\nYour account (\`${existing.id}\`) is active.\n\nUse the buttons below to check your daily tasks or setup target platforms:`, 
+          parse_mode: 'Markdown',
+          reply_markup: creatorKeyboard
+        });
         return;
       }
       activeSessions[chatId] = { type: 'MEMBER_REGISTRATION' };
-      await apiCall('sendMessage', { chat_id: chatId, text: `⚡️ *TEAM REGISTRATION:* Send your display name:`, parse_mode: 'Markdown' });
+      await apiCall('sendMessage', { 
+        chat_id: chatId, 
+        text: `⚡️ *TEAM CREATOR REGISTRATION*\n\nPlease reply with your **Display Name** (e.g. *Alex Vance* or *Crypto Analyst*):`, 
+        parse_mode: 'Markdown' 
+      });
+      return;
     }
-    else if (text.startsWith('/onboard')) {
+
+    if (text.startsWith('/start')) {
+      const existing = await getCreatorByChatId(chatId);
+      if (existing) {
+        await apiCall('sendMessage', { 
+          chat_id: chatId, 
+          text: `⚡️ Hello *${existing.public_name}*! Welcome to **Yaga Calls Operations**.\n\nSelect an action from the menu buttons below:`, 
+          parse_mode: 'Markdown',
+          reply_markup: creatorKeyboard
+        });
+      } else {
+        await apiCall('sendMessage', { 
+          chat_id: chatId, 
+          text: `⚡️ Welcome to **Yaga Calls Operations Bot**!\n\nTo join the team and receive daily content dispatches, click **[✍️ Register as Creator]** below.`, 
+          parse_mode: 'Markdown',
+          reply_markup: creatorKeyboard
+        });
+      }
+      return;
+    }
+
+    if (text.includes('Setup Platforms') || text.startsWith('/onboard')) {
       const creator = await getCreatorByChatId(chatId);
       if (creator) sendPlatformOnboardingCard(chatId, creator);
-      else apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Type /registration first.` });
+      else apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Please click ✍️ Register as Creator first.`, reply_markup: creatorKeyboard });
+      return;
     }
-    else if (text.startsWith('/tasks')) sendPendingTasksForChat(chatId);
+
+    if (text.includes('My Daily Tasks') || text.startsWith('/tasks')) {
+      sendPendingTasksForChat(chatId);
+      return;
+    }
+
+    if (text.includes('Report a Problem') || text.startsWith('/issue')) {
+      const creator = await getCreatorByChatId(chatId);
+      const issueId = `ISS-${Date.now().toString().substring(5)}`;
+      await runQuery(
+        `INSERT INTO public.issue_tickets (id, creator_id, creator_name, platform_id, issue_type, description, status) 
+         VALUES ($1, $2, $3, 'PL-GENERAL', 'Telegram General Issue', 'Creator reported issue via bot menu', 'OPEN')`, 
+        [issueId, creator?.id || 'UNKNOWN', creator?.public_name || msg.from.first_name]
+      );
+      await apiCall('sendMessage', { 
+        chat_id: chatId, 
+        text: `🚨 *ISSUE LOGGED:* Ticket \`${issueId}\` has been submitted to the CRM Issue Desk.\n\nOur system owner will inspect it shortly.`, 
+        parse_mode: 'Markdown',
+        reply_markup: creatorKeyboard
+      });
+      return;
+    }
   }
 
   if (update.callback_query) {

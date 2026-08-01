@@ -8,10 +8,11 @@ import {
   AlertTriangle, 
   BarChart3, 
   Settings,
-  Activity
+  Activity,
+  X
 } from 'lucide-react';
 
-export default function Sidebar({ activeTab, setActiveTab, openIssuesCount }) {
+export default function Sidebar({ activeTab, setActiveTab, openIssuesCount, mobileOpen, onClose }) {
   const menuItems = [
     { id: 'dashboard', label: 'Command Center', icon: LayoutDashboard },
     { id: 'studio', label: 'Content Studio', icon: CalendarDays, badge: '3-Batch' },
@@ -24,11 +25,29 @@ export default function Sidebar({ activeTab, setActiveTab, openIssuesCount }) {
     { id: 'settings', label: 'System Settings', icon: Settings },
   ];
 
-  return (
-    <aside className="w-64 glass-panel p-4 flex flex-col justify-between shrink-0 min-h-[calc(100vh-6rem)] border border-white/10">
+  const quickMobileItems = [
+    { id: 'dashboard', label: 'Command', icon: LayoutDashboard },
+    { id: 'studio', label: 'Studio', icon: CalendarDays },
+    { id: 'creators', label: 'Creators', icon: Users },
+    { id: 'issues', label: 'Issues', icon: AlertTriangle, count: openIssuesCount },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
+
+  const handleSelect = (id) => {
+    setActiveTab(id);
+    if (onClose) onClose();
+  };
+
+  const navContent = (
+    <div className="flex flex-col justify-between h-full">
       <div className="space-y-1.5">
-        <div className="px-3 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-          Navigation Menu
+        <div className="px-3 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center justify-between">
+          <span>Navigation Menu</span>
+          {onClose && (
+            <button onClick={onClose} className="md:hidden text-slate-400 hover:text-white p-1">
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
         {menuItems.map((item) => {
           const Icon = item.icon;
@@ -36,7 +55,7 @@ export default function Sidebar({ activeTab, setActiveTab, openIssuesCount }) {
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => handleSelect(item.id)}
               className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl font-bold text-xs transition-all duration-200 cursor-pointer ${
                 isActive
                   ? 'bg-gradient-to-r from-[#e39e2e] to-[#d5b895] text-[#0b0e14] shadow-lg shadow-[#e39e2e]/25 border border-[#e39e2e]/40 font-extrabold'
@@ -88,6 +107,55 @@ export default function Sidebar({ activeTab, setActiveTab, openIssuesCount }) {
           YAGA ENGINE #2026-v2.0
         </div>
       </div>
-    </aside>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop Sidebar (hidden on screens < md) */}
+      <aside className="hidden md:flex w-64 glass-panel p-4 flex-col justify-between shrink-0 min-h-[calc(100vh-6rem)] border border-white/10">
+        {navContent}
+      </aside>
+
+      {/* Mobile Slide-Over Drawer Overlay */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 flex md:hidden">
+          {/* Backdrop Blur */}
+          <div 
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm transition-opacity"
+            onClick={onClose}
+          />
+
+          {/* Drawer Content */}
+          <div className="relative w-4/5 max-w-xs bg-[#0b0e14] p-4 h-full shadow-2xl border-r border-white/10 z-10 overflow-y-auto">
+            {navContent}
+          </div>
+        </div>
+      )}
+
+      {/* Fixed Bottom Mobile Navigation Bar for Quick Access */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0f141d]/95 backdrop-blur-md border-t border-white/10 px-2 py-1.5 flex items-center justify-around">
+        {quickMobileItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`flex flex-col items-center justify-center p-1.5 rounded-xl transition-all relative ${
+                isActive ? 'text-[#e39e2e]' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Icon className="w-5 h-5" />
+              <span className="text-[9px] font-bold mt-0.5">{item.label}</span>
+              {item.count > 0 && (
+                <span className="absolute top-1 right-2 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+              )}
+            </button>
+          );
+        })}
+      </nav>
+    </>
   );
 }
+

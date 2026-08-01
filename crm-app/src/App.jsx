@@ -104,6 +104,7 @@ function toTask(row) {
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Live Supabase state
   const [creators, setCreators] = useState([]);
@@ -318,24 +319,28 @@ export default function App() {
       <Navbar 
         systemSettings={systemSettings} 
         activeBatch={dailyBatch}
+        mobileMenuOpen={mobileMenuOpen}
+        setMobileMenuOpen={setMobileMenuOpen}
         onPhaseToggle={handlePhaseToggle}
       />
 
       {/* Toast Notification Container */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 glass-panel p-4 max-w-md bg-[#0f141d]/95 border border-[#e39e2e]/50 shadow-2xl rounded-2xl flex items-center gap-3">
+        <div className="fixed bottom-16 sm:bottom-6 right-3 sm:right-6 z-50 glass-panel p-3.5 sm:p-4 max-w-md bg-[#0f141d]/95 border border-[#e39e2e]/50 shadow-2xl rounded-2xl flex items-center gap-3">
           <span className="text-xl">⚡️</span>
           <p className="text-xs font-semibold text-slate-100 leading-snug">{toastMessage}</p>
         </div>
       )}
 
       {/* Main Body Layout */}
-      <div className="flex-1 flex gap-6 px-6 pb-6 max-w-[1800px] w-full mx-auto">
+      <div className="flex-1 flex gap-4 md:gap-6 px-3.5 sm:px-6 pb-20 md:pb-6 max-w-[1800px] w-full mx-auto">
         {/* Left Sidebar */}
         <Sidebar 
           activeTab={activeTab} 
           setActiveTab={setActiveTab}
           openIssuesCount={openIssuesCount}
+          mobileOpen={mobileMenuOpen}
+          onClose={() => setMobileMenuOpen(false)}
         />
 
         {/* Right Content Area */}

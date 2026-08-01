@@ -12,6 +12,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "node-telegram-bot-api": "^1.2.0",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "ssh2": "^1.17.0"
   }
 }
