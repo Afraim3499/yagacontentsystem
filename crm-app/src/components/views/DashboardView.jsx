@@ -133,8 +133,8 @@ export default function DashboardView({
             <span className="text-3xl sm:text-4xl font-black text-white">{creators.length}</span>
             <span className="text-xs text-[#a7b0c0] font-semibold">Creators Active</span>
           </div>
-          <p className="text-xs text-slate-300 font-medium">
-            Alex Vance, Elena Rostova, Marcus Thorne
+          <p className="text-xs text-slate-300 font-medium truncate" title={creators.length > 0 ? creators.map(c => c.publicName).join(', ') : 'No creators registered yet'}>
+            {creators.length > 0 ? creators.map(c => c.publicName).join(', ') : 'No creators registered yet'}
           </p>
         </div>
 
