@@ -17,29 +17,50 @@ import {
   RefreshCw,
   Loader2,
   Clock,
-  ShieldCheck
+  ShieldCheck,
+  Zap,
+  Sparkles,
+  Edit3,
+  Check,
+  X,
+  Tag,
+  Settings
 } from 'lucide-react';
 
 export default function MemberTrackingDeskView() {
-  const [activeTab, setActiveTab] = useState("MEMBERS_LOG"); // MEMBERS_LOG | ASSOCIATES_VAULT
+  const [activeTab, setActiveTab] = useState("MEMBERS_LOG"); // MEMBERS_LOG | ASSOCIATES_VAULT | SETTINGS_VAULT
   const [membersLog, setMembersLog] = useState([]);
   const [associates, setAssociates] = useState([]);
+  const [packages, setPackages] = useState([]);
+  const [commissionRules, setCommissionRules] = useState({ free_rate_per_100: 30.00, paid_commission_pct: 5.00 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAssociate, setSelectedAssociate] = useState("ALL");
+  const [selectedTier, setSelectedTier] = useState("ALL"); // ALL | FREE_ONLY | PAID_VIP
   const [selectedMonth, setSelectedMonth] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
-  const [selectedLink, setSelectedLink] = useState("ALL");
 
   // New Associate Modal State
   const [isAddAssociateModalOpen, setIsAddAssociateModalOpen] = useState(false);
   const [newAscName, setNewAscName] = useState("");
   const [newAscChatId, setNewAscChatId] = useState("");
   const [newAscInviteLink, setNewAscInviteLink] = useState("");
-  const [newAscCommission, setNewAscCommission] = useState("5.00");
+
+  // VIP Upgrade Modal State
+  const [isVipModalOpen, setIsVipModalOpen] = useState(false);
+  const [selectedMemberForVip, setSelectedMemberForVip] = useState(null);
+  const [selectedPkgId, setSelectedPkgId] = useState("");
+  const [customVipValue, setCustomVipValue] = useState("");
+
+  // New Package Modal State
+  const [isAddPkgModalOpen, setIsAddPkgModalOpen] = useState(false);
+  const [newPkgName, setNewPkgName] = useState("");
+  const [newPkgDuration, setNewPkgDuration] = useState("3");
+  const [newPkgPrice, setNewPkgPrice] = useState("200.00");
+
   const [saving, setSaving] = useState(false);
 
   // Fetch Data from Supabase
@@ -49,8 +70,14 @@ export default function MemberTrackingDeskView() {
       const { data: ascData } = await supabase.from('associates').select('*').order('created_at', { ascending: false });
       setAssociates(ascData || []);
 
-      const { data: memData } = await supabase.from('community_members_log').select('*').order('joined_at', { ascending: false });
+      const { data: memData } = await supabase.from('community_members_log').select('*').order('created_at', { ascending: false });
       setMembersLog(memData || []);
+
+      const { data: pkgData } = await supabase.from('vip_packages').select('*').order('price', { ascending: true });
+      setPackages(pkgData || []);
+
+      const { data: ruleData } = await supabase.from('commission_rules').select('*').eq('id', 'RULE-DEFAULT').single();
+      if (ruleData) setCommissionRules(ruleData);
     } catch (err) {
       console.error('Error fetching member tracking data:', err);
     }
@@ -61,15 +88,13 @@ export default function MemberTrackingDeskView() {
   useEffect(() => {
     fetchData();
 
-    // Supabase Real-time Subscription for Live Member Joins
-    const subscription = supabase
+    // Supabase Real-time Subscriptions
+    const memSub = supabase
       .channel('community_members_realtime')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'community_members_log' }, (payload) => {
-        setMembersLog(prev => [payload.new, ...prev]);
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'community_members_log' }, () => fetchData())
       .subscribe();
 
-    return () => { supabase.removeChannel(subscription); };
+    return () => { supabase.removeChannel(memSub); };
   }, []);
 
   const handleRefresh = () => {
@@ -90,7 +115,8 @@ export default function MemberTrackingDeskView() {
         name: newAscName.trim(),
         telegram_chat_id: newAscChatId.trim() || null,
         unique_invite_link: newAscInviteLink.trim(),
-        commission_per_member: parseFloat(newAscCommission) || 5.00,
+        free_commission_rate: (Number(commissionRules.free_rate_per_100) / 100) || 0.30,
+        paid_commission_pct: Number(commissionRules.paid_commission_pct) || 5.00,
         status: 'ACTIVE'
       });
 
@@ -98,7 +124,6 @@ export default function MemberTrackingDeskView() {
       setNewAscName("");
       setNewAscChatId("");
       setNewAscInviteLink("");
-      setNewAscCommission("5.00");
       setIsAddAssociateModalOpen(false);
     } catch (err) {
       console.error('Add associate error:', err);
@@ -106,19 +131,117 @@ export default function MemberTrackingDeskView() {
     setSaving(false);
   };
 
-  // Delete Associate
-  const handleDeleteAssociate = async (ascId) => {
-    if (!confirm(`Delete associate ${ascId}? This will remove their assigned invite link.`)) return;
-    await supabase.from('associates').delete().eq('id', ascId);
-    setAssociates(prev => prev.filter(a => a.id !== ascId));
+  // Add New Package Tier
+  const handleAddPackage = async (e) => {
+    e.preventDefault();
+    if (!newPkgName.trim() || !newPkgPrice) return;
+    setSaving(true);
+
+    const pkgId = `PKG-${newPkgName.trim().toUpperCase().replace(/\s+/g, '-')}`;
+    try {
+      await supabase.from('vip_packages').insert({
+        id: pkgId,
+        name: newPkgName.trim(),
+        duration_months: parseInt(newPkgDuration) || 3,
+        price: parseFloat(newPkgPrice) || 200.00,
+        is_active: true
+      });
+
+      await fetchData();
+      setNewPkgName("");
+      setNewPkgDuration("3");
+      setNewPkgPrice("200.00");
+      setIsAddPkgModalOpen(false);
+    } catch (err) {
+      console.error('Add package error:', err);
+    }
+    setSaving(false);
+  };
+
+  // Update Package Price / Name
+  const handleUpdatePackage = async (pkgId, updatedPrice, updatedName) => {
+    try {
+      await supabase.from('vip_packages').update({
+        price: parseFloat(updatedPrice),
+        name: updatedName
+      }).eq('id', pkgId);
+      await fetchData();
+    } catch (err) {
+      console.error('Update package error:', err);
+    }
+  };
+
+  // Delete Package
+  const handleDeletePackage = async (pkgId) => {
+    if (!confirm('Delete this VIP package tier?')) return;
+    await supabase.from('vip_packages').delete().eq('id', pkgId);
+    setPackages(prev => prev.filter(p => p.id !== pkgId));
+  };
+
+  // Save Global Commission Rules
+  const handleSaveCommissionRules = async () => {
+    setSaving(true);
+    try {
+      await supabase.from('commission_rules').upsert({
+        id: 'RULE-DEFAULT',
+        free_rate_per_100: parseFloat(commissionRules.free_rate_per_100),
+        paid_commission_pct: parseFloat(commissionRules.paid_commission_pct),
+        updated_at: new Date().toISOString()
+      });
+      alert('✅ Global Commission Rules Saved Successfully!');
+    } catch (err) {
+      console.error('Error saving rules:', err);
+    }
+    setSaving(false);
+  };
+
+  // Process VIP Upgrade Conversion
+  const handleProcessVipUpgrade = async (e) => {
+    e.preventDefault();
+    if (!selectedMemberForVip) return;
+    setSaving(true);
+
+    let priceVal = 0;
+    let pkgName = "Custom VIP Access";
+
+    if (selectedPkgId === "CUSTOM") {
+      priceVal = parseFloat(customVipValue) || 200.00;
+    } else {
+      const selectedPkg = packages.find(p => p.id === selectedPkgId);
+      if (selectedPkg) {
+        priceVal = Number(selectedPkg.price);
+        pkgName = selectedPkg.name;
+      }
+    }
+
+    const paidComm = priceVal * (Number(commissionRules.paid_commission_pct) / 100);
+
+    try {
+      await supabase.from('community_members_log').update({
+        member_tier: 'PAID_VIP',
+        package_id: selectedPkgId,
+        package_name: pkgName,
+        paid_subscription_value: priceVal,
+        paid_commission: paidComm,
+        paid_group_joined_at: new Date().toISOString()
+      }).eq('id', selectedMemberForVip.id);
+
+      await fetchData();
+      setIsVipModalOpen(false);
+      setSelectedMemberForVip(null);
+    } catch (err) {
+      console.error('VIP Upgrade error:', err);
+    }
+    setSaving(false);
   };
 
   // Unique Months for Dropdown Filter
   const availableMonths = useMemo(() => {
     const months = new Set();
     membersLog.forEach(m => {
-      if (m.joined_at) {
-        const d = new Date(m.joined_at);
+      const dateStr = m.paid_group_joined_at || m.free_group_joined_at || m.created_at;
+      if (dateStr) {
+        const d = new Date(dateStr);
         const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         months.add(monthKey);
       }
@@ -126,17 +249,9 @@ export default function MemberTrackingDeskView() {
     return Array.from(months).sort().reverse();
   }, [membersLog]);
 
-  // Unique Links for Dropdown Filter
-  const availableLinks = useMemo(() => {
-    const links = new Set();
-    membersLog.forEach(m => { if (m.used_invite_link) links.add(m.used_invite_link); });
-    return Array.from(links);
-  }, [membersLog]);
-
   // Filtered Members Log Data
   const filteredLog = useMemo(() => {
     return membersLog.filter(item => {
-      // Search by Telegram User ID, Handle, or First Name
       const searchLower = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm || 
         item.telegram_user_id?.toLowerCase().includes(searchLower) ||
@@ -144,47 +259,49 @@ export default function MemberTrackingDeskView() {
         item.first_name?.toLowerCase().includes(searchLower) ||
         item.associate_name?.toLowerCase().includes(searchLower);
 
-      // Associate Filter
       const matchesAssociate = selectedAssociate === "ALL" || item.associate_id === selectedAssociate || item.associate_name === selectedAssociate;
-
-      // Month Filter
-      const matchesMonth = selectedMonth === "ALL" || (item.joined_at && item.joined_at.startsWith(selectedMonth));
-
-      // Status Filter
+      const matchesTier = selectedTier === "ALL" || item.member_tier === selectedTier;
+      const dateStr = item.paid_group_joined_at || item.free_group_joined_at || item.created_at;
+      const matchesMonth = selectedMonth === "ALL" || (dateStr && dateStr.startsWith(selectedMonth));
       const matchesStatus = selectedStatus === "ALL" || item.status === selectedStatus;
 
-      // Invite Link Filter
-      const matchesLink = selectedLink === "ALL" || item.used_invite_link === selectedLink;
-
-      return matchesSearch && matchesAssociate && matchesMonth && matchesStatus && matchesLink;
+      return matchesSearch && matchesAssociate && matchesTier && matchesMonth && matchesStatus;
     });
-  }, [membersLog, searchTerm, selectedAssociate, selectedMonth, selectedStatus, selectedLink]);
+  }, [membersLog, searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus]);
 
   // Summary Metrics Calculations
-  const activeMembersCount = membersLog.filter(m => m.status === 'ACTIVE').length;
-  const totalCommissions = membersLog.reduce((sum, m) => sum + (Number(m.commission_amount) || 5), 0);
+  const freeMembersCount = membersLog.filter(m => m.member_tier === 'FREE_ONLY' || !m.member_tier).length;
+  const paidVipCount = membersLog.filter(m => m.member_tier === 'PAID_VIP').length;
+  const totalRevenue = membersLog.reduce((sum, m) => sum + (Number(m.paid_subscription_value) || 0), 0);
+  const totalAssociateCommissions = membersLog.reduce((sum, m) => {
+    const freeC = Number(m.free_commission) || 0.30;
+    const paidC = Number(m.paid_commission) || 0;
+    return sum + freeC + paidC;
+  }, 0);
 
   // CSV Export Function
   const exportCSV = () => {
-    const headers = ['Log ID', 'Telegram User ID', 'First Name', 'Handle', 'Associate Name', 'Used Invite Link', 'Group Name', 'Joined Date & Time', 'Status', 'Commission ($)'];
+    const headers = ['Log ID', 'Telegram User ID', 'First Name', 'Handle', 'Associate Name', 'Member Tier', 'Package', 'VIP Revenue ($)', 'Free Comm ($)', 'Paid 5% Comm ($)', 'Total Comm ($)', 'Join Timestamp'];
     const rows = filteredLog.map(m => [
       m.id,
       m.telegram_user_id,
       `"${m.first_name || ''}"`,
       `"${m.telegram_handle || ''}"`,
       `"${m.associate_name || ''}"`,
-      `"${m.used_invite_link || ''}"`,
-      `"${m.group_name || ''}"`,
-      m.joined_at ? new Date(m.joined_at).toLocaleString() : '',
-      m.status,
-      m.commission_amount || 5.00
+      m.member_tier || 'FREE_ONLY',
+      `"${m.package_name || 'Free Group'}"`,
+      m.paid_subscription_value || 0,
+      m.free_commission || 0.30,
+      m.paid_commission || 0,
+      (Number(m.free_commission || 0.30) + Number(m.paid_commission || 0)).toFixed(2),
+      m.paid_group_joined_at || m.free_group_joined_at || m.created_at
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `community_members_tracking_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `community_member_tracking_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -196,15 +313,15 @@ export default function MemberTrackingDeskView() {
       <div className="glass-panel p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-white/10">
         <div>
           <div className="flex items-center gap-2">
-            <span className="badge badge-gold">Member Intelligence & Referral Desk</span>
+            <span className="badge badge-gold">2-Tier Member & Attribution Desk</span>
             <span className="text-xs text-slate-400 font-mono">Live Real-time Sync Active</span>
           </div>
           <h2 className="text-2xl font-black text-white tracking-tight mt-1 flex items-center gap-2 uppercase">
             <Users className="w-6 h-6 text-[#e39e2e]" />
-            Community Member Tracking & Associate Audit
+            Community Member Intelligence & VIP Conversions
           </h2>
           <p className="text-xs text-slate-400">
-            Real-time audit log of Telegram group joins, exact prebuilt invite links used, associate attribution, and live commission ledgers.
+            Audit free group joins ($30/100 members), paid VIP group upgrades (5% commission), and associate attribution ledgers.
           </p>
         </div>
 
@@ -223,7 +340,7 @@ export default function MemberTrackingDeskView() {
             className="px-4 py-2.5 rounded-xl bg-[#121722] hover:bg-[#1a2130] text-slate-200 font-bold text-xs border border-[#38bdf8]/40 flex items-center gap-2 cursor-pointer shadow-md"
           >
             <Download className="w-4 h-4 text-[#38bdf8]" />
-            Export Filtered CSV
+            Export CSV Audit Report
           </button>
 
           <button
@@ -240,52 +357,52 @@ export default function MemberTrackingDeskView() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <div className="glass-card-interactive p-5 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Members Tracked</span>
-            <div className="w-8 h-8 rounded-xl bg-[#e39e2e]/15 border border-[#e39e2e]/30 flex items-center justify-center text-[#e39e2e]">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Free Group Joins</span>
+            <div className="w-8 h-8 rounded-xl bg-[#00d294]/15 border border-[#00d294]/30 flex items-center justify-center text-[#00d294]">
               <Users className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-white">{membersLog.length}</div>
-          <p className="text-[11px] text-slate-400 font-mono">Captured Telegram Joins</p>
+          <div className="text-3xl font-black text-white">{freeMembersCount}</div>
+          <p className="text-[11px] text-[#00d294] font-mono">Earned @ ${commissionRules.free_rate_per_100} / 100 members</p>
         </div>
 
         <div className="glass-card-interactive p-5 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Active Group Members</span>
-            <div className="w-8 h-8 rounded-xl bg-[#00d294]/15 border border-[#00d294]/30 flex items-center justify-center text-[#00d294]">
-              <CheckCircle2 className="w-4 h-4" />
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Paid VIP Conversions</span>
+            <div className="w-8 h-8 rounded-xl bg-[#e39e2e]/15 border border-[#e39e2e]/30 flex items-center justify-center text-[#e39e2e]">
+              <Sparkles className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-[#00d294]">{activeMembersCount}</div>
-          <p className="text-[11px] text-slate-400 font-mono">{membersLog.length - activeMembersCount} left group</p>
+          <div className="text-3xl font-black text-[#e39e2e]">{paidVipCount}</div>
+          <p className="text-[11px] text-slate-400 font-mono">Earned @ {commissionRules.paid_commission_pct}% VIP Commission</p>
         </div>
 
         <div className="glass-card-interactive p-5 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Active Associates</span>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total VIP Revenue</span>
             <div className="w-8 h-8 rounded-xl bg-[#38bdf8]/15 border border-[#38bdf8]/30 flex items-center justify-center text-[#38bdf8]">
-              <Crown className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-3xl font-black text-white">{associates.length}</div>
-          <p className="text-[11px] text-slate-400 font-mono">Assigned Unique Links</p>
-        </div>
-
-        <div className="glass-card-interactive p-5 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Commissions</span>
-            <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
               <DollarSign className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-emerald-400">${totalCommissions.toFixed(2)}</div>
-          <p className="text-[11px] text-slate-400 font-mono">Accrued Referral Value</p>
+          <div className="text-3xl font-black text-white">${totalRevenue.toFixed(2)}</div>
+          <p className="text-[11px] text-[#38bdf8] font-mono">Gross Paid Subscriptions</p>
+        </div>
+
+        <div className="glass-card-interactive p-5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Associate Commissions</span>
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+              <Crown className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-3xl font-black text-emerald-400">${totalAssociateCommissions.toFixed(2)}</div>
+          <p className="text-[11px] text-slate-400 font-mono">Total Associate Ledger</p>
         </div>
       </div>
 
       {/* Main View Container */}
       <div className="glass-panel p-6 space-y-6 border border-white/10">
-        {/* Tab Switcher & Filter Controls */}
+        {/* Tab Switcher */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-white/10">
           <div className="flex items-center gap-2 bg-[#080a0f] p-1.5 rounded-xl border border-white/10">
             <button
@@ -294,7 +411,7 @@ export default function MemberTrackingDeskView() {
                 activeTab === "MEMBERS_LOG" ? "bg-[#e39e2e] text-[#0b0e14] shadow-md" : "text-slate-400 hover:text-white"
               }`}
             >
-              Member Join Log ({filteredLog.length})
+              Member Join & VIP Conversion Log ({filteredLog.length})
             </button>
             <button
               onClick={() => setActiveTab("ASSOCIATES_VAULT")}
@@ -302,35 +419,36 @@ export default function MemberTrackingDeskView() {
                 activeTab === "ASSOCIATES_VAULT" ? "bg-[#e39e2e] text-[#0b0e14] shadow-md" : "text-slate-400 hover:text-white"
               }`}
             >
-              Associates & Unique Links ({associates.length})
+              Associates Roster ({associates.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("SETTINGS_VAULT")}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "SETTINGS_VAULT" ? "bg-[#e39e2e] text-[#0b0e14] shadow-md" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Package & Commission Settings Vault
             </button>
           </div>
-
-          {activeTab === "MEMBERS_LOG" && (
-            <div className="text-xs text-slate-400 font-mono">
-              Showing {filteredLog.length} of {membersLog.length} entries
-            </div>
-          )}
         </div>
 
-        {/* TAB 1: MEMBERS JOIN AUDIT LOG & MULTI-FILTERS */}
+        {/* TAB 1: MEMBERS JOIN & VIP CONVERSION LOG */}
         {activeTab === "MEMBERS_LOG" && (
           <div className="space-y-5">
-            {/* Multi-Filter Control Toolbar */}
+            {/* Multi-Filter Controls */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 bg-[#080a0f] p-4 rounded-2xl border border-white/10">
-              {/* Filter 1: Search Input */}
               <div className="relative">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                 <input
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search Member ID / Username..."
+                  placeholder="Search Member ID / Name..."
                   className="w-full bg-[#121722] text-slate-100 text-xs pl-9 pr-3 py-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-mono"
                 />
               </div>
 
-              {/* Filter 2: Associate Filter */}
               <div>
                 <select
                   value={selectedAssociate}
@@ -345,7 +463,18 @@ export default function MemberTrackingDeskView() {
                 </select>
               </div>
 
-              {/* Filter 3: Month Filter */}
+              <div>
+                <select
+                  value={selectedTier}
+                  onChange={(e) => setSelectedTier(e.target.value)}
+                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer"
+                >
+                  <option value="ALL">⚡ All Member Tiers</option>
+                  <option value="FREE_ONLY">🆓 Free Group Only</option>
+                  <option value="PAID_VIP">💎 Upgraded to Paid VIP</option>
+                </select>
+              </div>
+
               <div>
                 <select
                   value={selectedMonth}
@@ -359,21 +488,6 @@ export default function MemberTrackingDeskView() {
                 </select>
               </div>
 
-              {/* Filter 4: Unique Link Source */}
-              <div>
-                <select
-                  value={selectedLink}
-                  onChange={(e) => setSelectedLink(e.target.value)}
-                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer font-mono"
-                >
-                  <option value="ALL">🔗 All Invite Links</option>
-                  {availableLinks.map(link => (
-                    <option key={link} value={link}>{link}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Filter 5: Member Status */}
               <div>
                 <select
                   value={selectedStatus}
@@ -397,55 +511,84 @@ export default function MemberTrackingDeskView() {
               <div className="py-16 text-center text-slate-500 space-y-2">
                 <Users className="w-12 h-12 mx-auto text-slate-600" />
                 <p className="text-sm font-semibold">No member entries found matching filters.</p>
-                <p className="text-xs text-slate-600">Try adjusting your search criteria or date selection.</p>
               </div>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-white/10">
                 <table className="w-full text-left text-xs text-slate-300">
                   <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
                     <tr>
-                      <th className="p-3.5">Log ID</th>
-                      <th className="p-3.5">Member Telegram ID & Name</th>
-                      <th className="p-3.5">Associate Assigned</th>
-                      <th className="p-3.5">Used Invite Link</th>
-                      <th className="p-3.5">Joined Date & Time</th>
-                      <th className="p-3.5">Group</th>
-                      <th className="p-3.5">Status</th>
-                      <th className="p-3.5">Commission ($)</th>
+                      <th className="p-3.5">Member ID & Name</th>
+                      <th className="p-3.5">Associate Attribution</th>
+                      <th className="p-3.5">Member Tier</th>
+                      <th className="p-3.5">VIP Package & Revenue ($)</th>
+                      <th className="p-3.5">Free Comm ($30/100)</th>
+                      <th className="p-3.5">Paid 5% Comm ($)</th>
+                      <th className="p-3.5">Joined Timestamps</th>
+                      <th className="p-3.5">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 font-mono">
-                    {filteredLog.map((item) => (
-                      <tr key={item.id} className="hover:bg-[#121722] transition-colors">
-                        <td className="p-3.5 font-bold text-[#e39e2e]">{item.id}</td>
-                        <td className="p-3.5 font-sans">
-                          <div className="font-bold text-white text-xs">{item.first_name || 'Member'}</div>
-                          <div className="text-[10px] text-[#38bdf8] font-mono">ID: {item.telegram_user_id} {item.telegram_handle}</div>
-                        </td>
-                        <td className="p-3.5 font-sans">
-                          <span className={`font-bold ${item.associate_id ? 'text-[#00d294]' : 'text-slate-400'}`}>
-                            {item.associate_name || 'Unattributed'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-slate-400 text-[11px]">
-                          <span className="truncate max-w-[200px] block" title={item.used_invite_link}>
-                            {item.used_invite_link || 'Direct/Unknown'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-slate-300 text-[11px]">
-                          {item.joined_at ? new Date(item.joined_at).toLocaleString() : 'N/A'}
-                        </td>
-                        <td className="p-3.5 font-sans text-xs text-slate-300">{item.group_name || 'VIP Group'}</td>
-                        <td className="p-3.5">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            item.status === 'ACTIVE' ? 'bg-[#00d294]/15 text-[#00d294] border border-[#00d294]/30' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                          }`}>
-                            {item.status}
-                          </span>
-                        </td>
-                        <td className="p-3.5 font-bold text-emerald-400">+${Number(item.commission_amount || 5.00).toFixed(2)}</td>
-                      </tr>
-                    ))}
+                    {filteredLog.map((item) => {
+                      const totalComm = (Number(item.free_commission || 0.30) + Number(item.paid_commission || 0)).toFixed(2);
+                      const isVip = item.member_tier === 'PAID_VIP';
+
+                      return (
+                        <tr key={item.id} className="hover:bg-[#121722] transition-colors">
+                          <td className="p-3.5 font-sans">
+                            <div className="font-bold text-white text-xs">{item.first_name || 'Member'}</div>
+                            <div className="text-[10px] text-[#38bdf8] font-mono">ID: {item.telegram_user_id} {item.telegram_handle}</div>
+                          </td>
+                          <td className="p-3.5 font-sans">
+                            <span className={`font-bold ${item.associate_id ? 'text-[#00d294]' : 'text-slate-400'}`}>
+                              {item.associate_name || 'Unattributed'}
+                            </span>
+                          </td>
+                          <td className="p-3.5">
+                            {isVip ? (
+                              <span className="px-2.5 py-1 rounded text-[10px] font-black bg-gradient-to-r from-[#e39e2e] to-[#d5b895] text-[#0b0e14] uppercase flex items-center gap-1 w-max shadow-md">
+                                <Sparkles className="w-3 h-3" /> PAID VIP
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00d294]/15 text-[#00d294] border border-[#00d294]/30 uppercase">
+                                FREE ONLY
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3.5 font-sans">
+                            {isVip ? (
+                              <div>
+                                <div className="font-bold text-white text-xs">{item.package_name || 'VIP Package'}</div>
+                                <div className="text-[11px] text-[#e39e2e] font-mono font-bold">${Number(item.paid_subscription_value || 200).toFixed(2)}</div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-500 text-[11px]">N/A (Free Group)</span>
+                            )}
+                          </td>
+                          <td className="p-3.5 font-bold text-emerald-400">+${Number(item.free_commission || 0.30).toFixed(2)}</td>
+                          <td className="p-3.5 font-bold text-[#e39e2e]">
+                            {Number(item.paid_commission) > 0 ? `+$${Number(item.paid_commission).toFixed(2)}` : '$0.00'}
+                          </td>
+                          <td className="p-3.5 text-slate-300 text-[10px]">
+                            <div>Free: {item.free_group_joined_at ? new Date(item.free_group_joined_at).toLocaleDateString() : 'N/A'}</div>
+                            {item.paid_group_joined_at && <div className="text-[#e39e2e]">VIP: {new Date(item.paid_group_joined_at).toLocaleDateString()}</div>}
+                          </td>
+                          <td className="p-3.5">
+                            {!isVip && (
+                              <button
+                                onClick={() => {
+                                  setSelectedMemberForVip(item);
+                                  setSelectedPkgId(packages[0]?.id || "CUSTOM");
+                                  setIsVipModalOpen(true);
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-[#e39e2e]/15 hover:bg-[#e39e2e] text-[#e39e2e] hover:text-[#0b0e14] font-bold text-[10px] uppercase border border-[#e39e2e]/40 transition-all cursor-pointer flex items-center gap-1"
+                              >
+                                <Sparkles className="w-3 h-3" /> Upgrade VIP
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -453,7 +596,7 @@ export default function MemberTrackingDeskView() {
           </div>
         )}
 
-        {/* TAB 2: ASSOCIATES & UNIQUE INVITE LINKS VAULT */}
+        {/* TAB 2: ASSOCIATES ROSTER */}
         {activeTab === "ASSOCIATES_VAULT" && (
           <div className="space-y-5">
             <div className="flex items-center justify-between">
@@ -463,7 +606,7 @@ export default function MemberTrackingDeskView() {
                   Associates Roster & Unique Link Mapping
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Every Associate is mapped to their unique prebuilt Telegram invite link URL. When a new user enters via that link, commissions accrue instantly.
+                  Each associate has a unique prebuilt Telegram invite link. Joins accrue $30/100 free members + 5% on Paid VIP upgrades.
                 </p>
               </div>
 
@@ -476,76 +619,306 @@ export default function MemberTrackingDeskView() {
               </button>
             </div>
 
-            {associates.length === 0 ? (
-              <div className="glass-panel p-12 text-center space-y-4 border border-white/10">
-                <Crown className="w-12 h-12 text-slate-600 mx-auto" />
-                <p className="text-sm font-semibold text-slate-400">No Associates registered yet.</p>
-                <p className="text-xs text-slate-500">Click <strong className="text-white">+ Add New Associate</strong> above to assign a prebuilt Telegram unique link.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {associates.map((asc) => {
-                  const referralsCount = membersLog.filter(m => m.associate_id === asc.id || m.associate_name === asc.name).length;
-                  const earnedCommissions = referralsCount * (Number(asc.commission_per_member) || 5);
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {associates.map((asc) => {
+                const ascMembers = membersLog.filter(m => m.associate_id === asc.id || m.associate_name === asc.name);
+                const freeCount = ascMembers.filter(m => m.member_tier === 'FREE_ONLY' || !m.member_tier).length;
+                const paidCount = ascMembers.filter(m => m.member_tier === 'PAID_VIP').length;
+                const totalEarned = ascMembers.reduce((sum, m) => sum + (Number(m.free_commission || 0.30) + Number(m.paid_commission || 0)), 0);
 
-                  return (
-                    <div key={asc.id} className="glass-panel p-6 space-y-4 border border-[#e39e2e]/40 relative overflow-hidden flex flex-col justify-between">
-                      <div className="space-y-3">
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#e39e2e] to-[#d5b895] flex items-center justify-center text-[#0b0e14] font-black">
-                              {asc.name.substring(0, 2).toUpperCase()}
-                            </div>
-                            <div>
-                              <span className="badge badge-gold font-mono text-[10px]">{asc.id}</span>
-                              <h4 className="text-base font-bold text-white mt-0.5">{asc.name}</h4>
-                            </div>
+                return (
+                  <div key={asc.id} className="glass-panel p-6 space-y-4 border border-[#e39e2e]/40 relative overflow-hidden flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#e39e2e] to-[#d5b895] flex items-center justify-center text-[#0b0e14] font-black">
+                            {asc.name.substring(0, 2).toUpperCase()}
                           </div>
-                          <span className="badge badge-emerald text-[10px]">Active</span>
-                        </div>
-
-                        <div className="space-y-2 bg-[#080a0f] p-3.5 rounded-xl border border-white/5 text-xs font-mono">
                           <div>
-                            <span className="text-slate-400 block text-[10px] uppercase font-bold mb-0.5">Assigned Prebuilt Invite Link:</span>
-                            <span className="text-[#38bdf8] font-bold text-[11px] truncate block" title={asc.unique_invite_link}>
-                              {asc.unique_invite_link}
-                            </span>
-                          </div>
-                          <div className="flex justify-between pt-1 border-t border-white/5">
-                            <span className="text-slate-400">Commission / Member:</span>
-                            <span className="text-emerald-400 font-bold">${Number(asc.commission_per_member).toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-400">Total Referrals Logged:</span>
-                            <span className="text-white font-bold">{referralsCount} Members</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-400">Total Earned Balance:</span>
-                            <span className="text-emerald-400 font-bold">${earnedCommissions.toFixed(2)}</span>
+                            <span className="badge badge-gold font-mono text-[10px]">{asc.id}</span>
+                            <h4 className="text-base font-bold text-white mt-0.5">{asc.name}</h4>
                           </div>
                         </div>
+                        <span className="badge badge-emerald text-[10px]">Active</span>
                       </div>
 
-                      <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs">
-                        <span className="text-slate-500 text-[10px] font-mono">
-                          Created: {asc.created_at ? new Date(asc.created_at).toLocaleDateString() : 'Active'}
-                        </span>
+                      <div className="space-y-2 bg-[#080a0f] p-3.5 rounded-xl border border-white/5 text-xs font-mono">
+                        <div>
+                          <span className="text-slate-400 block text-[10px] uppercase font-bold mb-0.5">Assigned Prebuilt Invite Link:</span>
+                          <span className="text-[#38bdf8] font-bold text-[11px] truncate block" title={asc.unique_invite_link}>
+                            {asc.unique_invite_link}
+                          </span>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-white/5">
+                          <span className="text-slate-400">Free Group Joins:</span>
+                          <span className="text-white font-bold">{freeCount} members</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Paid VIP Conversions:</span>
+                          <span className="text-[#e39e2e] font-bold">{paidCount} members (5%)</span>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-white/5">
+                          <span className="text-slate-400">Total Earned Balance:</span>
+                          <span className="text-emerald-400 font-bold">${totalEarned.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: DYNAMIC EDITABLE PACKAGE & COMMISSION SETTINGS VAULT */}
+        {activeTab === "SETTINGS_VAULT" && (
+          <div className="space-y-6">
+            {/* Global Commission Rules Manager */}
+            <div className="glass-panel p-6 space-y-4 border border-white/10 bg-[#080a0f]">
+              <h3 className="text-base font-black text-white uppercase tracking-tight flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-[#00d294]" />
+                Global Commission Rules Manager (Editable)
+              </h3>
+              <p className="text-xs text-slate-400">
+                Change global default commission rates anytime. Edits take effect immediately for all new joins.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-2">
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-bold uppercase text-xs block">Free Group Commission ($ per 100 members)</label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 font-mono">$</span>
+                    <input
+                      type="number"
+                      step="1.00"
+                      value={commissionRules.free_rate_per_100}
+                      onChange={(e) => setCommissionRules(prev => ({ ...prev, free_rate_per_100: e.target.value }))}
+                      className="bg-[#121722] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#00d294] focus:outline-none font-mono text-sm w-full"
+                    />
+                    <span className="text-xs text-slate-400">/ 100 members</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-bold uppercase text-xs block">Paid VIP Commission Percentage (%)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={commissionRules.paid_commission_pct}
+                      onChange={(e) => setCommissionRules(prev => ({ ...prev, paid_commission_pct: e.target.value }))}
+                      className="bg-[#121722] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-mono text-sm w-full"
+                    />
+                    <span className="text-xs text-[#e39e2e] font-bold">% of VIP Package Value</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  onClick={handleSaveCommissionRules}
+                  disabled={saving}
+                  className="grad-button px-5 py-2.5 rounded-xl font-black text-xs shadow-lg flex items-center gap-2 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" /> Save Commission Rules
+                </button>
+              </div>
+            </div>
+
+            {/* Dynamic Editable VIP Package Tiers Vault */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
+                    <Tag className="w-5 h-5 text-[#e39e2e]" />
+                    VIP Package Tiers & Price Vault (Editable)
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Add or edit package prices anytime. Associate 5% commissions recalculate automatically based on active package prices.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setIsAddPkgModalOpen(true)}
+                  className="grad-button px-4 py-2 rounded-xl text-xs font-black shadow-lg flex items-center gap-2 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  + Create New Package Tier
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                {packages.map((pkg) => {
+                  const commAmount = Number(pkg.price) * (Number(commissionRules.paid_commission_pct) / 100);
+
+                  return (
+                    <div key={pkg.id} className="glass-panel p-6 space-y-4 border border-white/10 bg-[#0f141d] relative">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <span className="badge badge-gold font-mono text-[10px]">{pkg.id}</span>
+                          <h4 className="text-base font-black text-white mt-1">{pkg.name}</h4>
+                          <span className="text-xs text-slate-400">{pkg.duration_months} Months Access</span>
+                        </div>
                         <button
-                          onClick={() => handleDeleteAssociate(asc.id)}
-                          className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 cursor-pointer"
-                          title="Delete Associate"
+                          onClick={() => handleDeletePackage(pkg.id)}
+                          className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
+                      </div>
+
+                      <div className="space-y-2 bg-[#080a0f] p-3.5 rounded-xl border border-white/5 text-xs font-mono">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400">Package Price ($):</span>
+                          <input
+                            type="number"
+                            value={pkg.price}
+                            onChange={(e) => handleUpdatePackage(pkg.id, e.target.value, pkg.name)}
+                            className="bg-[#121722] text-[#e39e2e] font-black text-sm px-2.5 py-1 rounded border border-white/10 w-28 text-right focus:outline-none"
+                          />
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-white/5 text-[11px]">
+                          <span className="text-slate-400">Associate 5% Bonus:</span>
+                          <span className="text-emerald-400 font-bold">${commAmount.toFixed(2)}</span>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
+
+      {/* Modal: VIP Upgrade Action */}
+      {isVipModalOpen && selectedMemberForVip && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-panel max-w-md w-full p-6 space-y-5 border border-[#e39e2e]/40 bg-[#0f141d]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#e39e2e] to-[#d5b895] flex items-center justify-center text-[#0b0e14] font-black">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white uppercase">Upgrade to Paid VIP</h3>
+                  <p className="text-xs text-slate-400">Select package tier for member {selectedMemberForVip.first_name}</p>
+                </div>
+              </div>
+              <button onClick={() => setIsVipModalOpen(false)} className="text-slate-400 hover:text-white font-mono text-xs cursor-pointer">✕ Close</button>
+            </div>
+
+            <form onSubmit={handleProcessVipUpgrade} className="space-y-4 text-xs">
+              <div className="bg-[#080a0f] p-3 rounded-xl border border-white/10 space-y-1 font-mono text-xs">
+                <div className="text-slate-400">Original Referring Associate:</div>
+                <div className="text-[#00d294] font-bold text-sm">{selectedMemberForVip.associate_name || 'Unattributed'}</div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-bold uppercase tracking-wider block">Select VIP Package Tier *</label>
+                <select
+                  value={selectedPkgId}
+                  onChange={(e) => setSelectedPkgId(e.target.value)}
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-bold"
+                >
+                  {packages.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} — ${p.price} (5% Comm = ${(Number(p.price)*0.05).toFixed(2)})</option>
+                  ))}
+                  <option value="CUSTOM">💎 Custom Deal Amount ($)</option>
+                </select>
+              </div>
+
+              {selectedPkgId === "CUSTOM" && (
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Custom VIP Subscription Price ($) *</label>
+                  <input
+                    type="number"
+                    required
+                    value={customVipValue}
+                    onChange={(e) => setCustomVipValue(e.target.value)}
+                    placeholder="e.g. 500.00"
+                    className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-mono"
+                  />
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setIsVipModalOpen(false)} className="px-4 py-2 rounded-xl bg-[#121722] text-slate-300 font-bold cursor-pointer">Cancel</button>
+                <button type="submit" disabled={saving} className="grad-button px-5 py-2.5 rounded-xl font-black shadow-lg cursor-pointer flex items-center gap-2">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  Confirm VIP Conversion
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Create New Package Tier */}
+      {isAddPkgModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-panel max-w-md w-full p-6 space-y-5 border border-[#e39e2e]/40 bg-[#0f141d]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#e39e2e] to-[#d5b895] flex items-center justify-center text-[#0b0e14] font-black">
+                  <Tag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white uppercase">Create New VIP Package Tier</h3>
+                  <p className="text-xs text-slate-400">Add custom package duration and price</p>
+                </div>
+              </div>
+              <button onClick={() => setIsAddPkgModalOpen(false)} className="text-slate-400 hover:text-white font-mono text-xs cursor-pointer">✕ Close</button>
+            </div>
+
+            <form onSubmit={handleAddPackage} className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-bold uppercase tracking-wider block">Package Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={newPkgName}
+                  onChange={(e) => setNewPkgName(e.target.value)}
+                  placeholder="e.g. Lifetime Platinum Access"
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-bold uppercase tracking-wider block">Duration (Months) *</label>
+                <input
+                  type="number"
+                  required
+                  value={newPkgDuration}
+                  onChange={(e) => setNewPkgDuration(e.target.value)}
+                  placeholder="e.g. 12"
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-bold uppercase tracking-wider block">Package Price ($) *</label>
+                <input
+                  type="number"
+                  step="10.00"
+                  required
+                  value={newPkgPrice}
+                  onChange={(e) => setNewPkgPrice(e.target.value)}
+                  placeholder="600.00"
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setIsAddPkgModalOpen(false)} className="px-4 py-2 rounded-xl bg-[#121722] text-slate-300 font-bold cursor-pointer">Cancel</button>
+                <button type="submit" disabled={saving} className="grad-button px-5 py-2.5 rounded-xl font-black shadow-lg cursor-pointer flex items-center gap-2">
+                  Create Package Tier
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Add New Associate */}
       {isAddAssociateModalOpen && (
@@ -573,7 +946,7 @@ export default function MemberTrackingDeskView() {
                   value={newAscName}
                   onChange={(e) => setNewAscName(e.target.value)}
                   placeholder="e.g. Associate Alex"
-                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-sans"
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none"
                 />
               </div>
 
@@ -600,24 +973,10 @@ export default function MemberTrackingDeskView() {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Commission per Member ($)</label>
-                <input
-                  type="number"
-                  step="0.50"
-                  required
-                  value={newAscCommission}
-                  onChange={(e) => setNewAscCommission(e.target.value)}
-                  placeholder="5.00"
-                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-mono"
-                />
-              </div>
-
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={() => setIsAddAssociateModalOpen(false)} className="px-4 py-2 rounded-xl bg-[#121722] text-slate-300 font-bold cursor-pointer">Cancel</button>
                 <button type="submit" disabled={saving} className="grad-button px-5 py-2.5 rounded-xl font-black shadow-lg cursor-pointer flex items-center gap-2 disabled:opacity-50">
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                  {saving ? 'Saving...' : 'Register Associate'}
+                  Register Associate
                 </button>
               </div>
             </form>

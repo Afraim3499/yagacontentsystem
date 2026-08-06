@@ -517,56 +517,123 @@ async function handleUpdate(update) {
     const groupTitle = cm.chat?.title || 'Telegram Group';
     const groupId = cm.chat?.id?.toString() || '';
 
-    // Detect MEMBER JOIN event
+    // MEMBER JOIN EVENT
     if ((oldStatus === 'left' || oldStatus === 'kicked' || oldStatus === 'restricted' || !oldStatus) &&
         (newStatus === 'member' || newStatus === 'administrator' || newStatus === 'creator')) {
       
-      let associateId = null;
-      let associateName = 'Unattributed / Direct';
-      let commission = 5.00;
-
-      if (inviteLink) {
-        try {
-          const ascRes = await runQuery(`SELECT * FROM public.associates WHERE unique_invite_link = $1 LIMIT 1`, [inviteLink]);
-          if (ascRes.rows.length > 0) {
-            const asc = ascRes.rows[0];
-            associateId = asc.id;
-            associateName = asc.name;
-            commission = Number(asc.commission_per_member || 5.00);
-          }
-        } catch (err) {
-          console.error('Error fetching associate for link:', err);
-        }
-      }
-
-      const logId = `MEM-${Date.now().toString().substring(5)}`;
-      const handle = user.username ? `@${user.username}` : '';
-      const firstName = user.first_name || 'Member';
-
       try {
-        await runQuery(
-          `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, joined_at, status, commission_amount)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'ACTIVE', $10)`,
-          [logId, user.id.toString(), handle, firstName, associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, commission]
-        );
-        console.log(`🎉 MEMBER JOIN LOGGED: ${firstName} (${user.id}) via ${associateName}`);
+        // Check group type from group_config
+        const groupCfgRes = await runQuery(`SELECT group_type FROM public.group_config WHERE telegram_group_id = $1 LIMIT 1`, [groupId]);
+        const isPaidGroup = (groupCfgRes.rows[0]?.group_type === 'PAID_GROUP') || 
+                            groupTitle.toLowerCase().includes('vip') || 
+                            groupTitle.toLowerCase().includes('paid');
 
-        if (associateId) {
-          const ascInfo = await runQuery(`SELECT telegram_chat_id FROM public.associates WHERE id = $1`, [associateId]);
-          const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
-          if (ascChatId) {
-            await apiCall('sendMessage', {
-              chat_id: ascChatId,
-              text: `🎉 *NEW REFERRAL CONVERSION!*\n\nMember *${firstName}* (${handle || user.id}) joined *${groupTitle}* using your unique link.\n\n💰 *Commission Accrued:* \`+$${commission.toFixed(2)}\``,
-              parse_mode: 'Markdown'
-            });
+        // Check if member already exists in community_members_log
+        const existingRes = await runQuery(`SELECT * FROM public.community_members_log WHERE telegram_user_id = $1 LIMIT 1`, [user.id.toString()]);
+
+        if (isPaidGroup) {
+          // --- 💎 PAID VIP GROUP JOIN ATTRIBUTION ---
+          let paidCommissionPct = 5.00;
+          const ruleRes = await runQuery(`SELECT paid_commission_pct FROM public.commission_rules WHERE id = 'RULE-DEFAULT' LIMIT 1`);
+          if (ruleRes.rows.length > 0) {
+            paidCommissionPct = Number(ruleRes.rows[0].paid_commission_pct || 5.00);
+          }
+
+          if (existingRes.rows.length > 0) {
+            const ex = existingRes.rows[0];
+            const associateId = ex.associate_id;
+            const associateName = ex.associate_name;
+
+            // Default VIP package value $200 (Quarterly) if unspecified
+            const subValue = Number(ex.paid_subscription_value) > 0 ? Number(ex.paid_subscription_value) : 200.00;
+            const paidComm = subValue * (paidCommissionPct / 100);
+
+            await runQuery(
+              `UPDATE public.community_members_log 
+               SET member_tier = 'PAID_VIP', 
+                   paid_group_joined_at = NOW(), 
+                   paid_subscription_value = $1, 
+                   paid_commission = $2, 
+                   status = 'ACTIVE' 
+               WHERE telegram_user_id = $3`,
+              [subValue, paidComm, user.id.toString()]
+            );
+
+            console.log(`💎 PAID VIP CONVERSION LOGGED: ${user.first_name} (${user.id}) attributed to ${associateName} (+ $${paidComm.toFixed(2)})`);
+
+            if (associateId) {
+              const ascInfo = await runQuery(`SELECT telegram_chat_id FROM public.associates WHERE id = $1`, [associateId]);
+              const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
+              if (ascChatId) {
+                await apiCall('sendMessage', {
+                  chat_id: ascChatId,
+                  text: `🎉 *HIGH VALUE VIP CONVERSION!*\n\nMember *${user.first_name}* (${user.username ? '@'+user.username : user.id}) upgraded to *PAID VIP*!\n\n💰 *Earned 5% Commission Bonus:* \`+$${paidComm.toFixed(2)}\``,
+                  parse_mode: 'Markdown'
+                });
+              }
+            }
+          } else {
+            // New user joining Paid Group directly
+            const logId = `MEM-${Date.now().toString().substring(5)}`;
+            await runQuery(
+              `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_name, group_id, group_name, paid_group_joined_at, member_tier, status, paid_subscription_value, paid_commission)
+               VALUES ($1, $2, $3, $4, 'Direct VIP', $5, $6, NOW(), 'PAID_VIP', 'ACTIVE', 200.00, 10.00)`,
+              [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', groupId, groupTitle]
+            );
+          }
+        } else {
+          // --- 🆓 FREE GROUP JOIN ATTRIBUTION ---
+          let associateId = null;
+          let associateName = 'Unattributed / Direct';
+          let freeComm = 0.30; // $30 / 100 members
+
+          const ruleRes = await runQuery(`SELECT free_rate_per_100 FROM public.commission_rules WHERE id = 'RULE-DEFAULT' LIMIT 1`);
+          if (ruleRes.rows.length > 0) {
+            freeComm = Number(ruleRes.rows[0].free_rate_per_100 || 30.00) / 100;
+          }
+
+          if (inviteLink) {
+            const ascRes = await runQuery(`SELECT * FROM public.associates WHERE unique_invite_link = $1 LIMIT 1`, [inviteLink]);
+            if (ascRes.rows.length > 0) {
+              const asc = ascRes.rows[0];
+              associateId = asc.id;
+              associateName = asc.name;
+              if (Number(asc.free_commission_rate) > 0) {
+                freeComm = Number(asc.free_commission_rate);
+              }
+            }
+          }
+
+          if (existingRes.rows.length === 0) {
+            const logId = `MEM-${Date.now().toString().substring(5)}`;
+            const handle = user.username ? `@${user.username}` : '';
+            const firstName = user.first_name || 'Member';
+
+            await runQuery(
+              `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status, free_commission)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'FREE_ONLY', 'ACTIVE', $10)`,
+              [logId, user.id.toString(), handle, firstName, associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, freeComm]
+            );
+            console.log(`🎉 FREE MEMBER JOIN LOGGED: ${firstName} (${user.id}) via ${associateName} (+$${freeComm.toFixed(2)})`);
+
+            if (associateId) {
+              const ascInfo = await runQuery(`SELECT telegram_chat_id FROM public.associates WHERE id = $1`, [associateId]);
+              const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
+              if (ascChatId) {
+                await apiCall('sendMessage', {
+                  chat_id: ascChatId,
+                  text: `🎉 *NEW REFERRAL CONVERSION!*\n\nMember *${firstName}* (${handle || user.id}) joined *${groupTitle}* using your unique link.\n\n💰 *Free Commission Accrued:* \`+$${freeComm.toFixed(2)}\``,
+                  parse_mode: 'Markdown'
+                });
+              }
+            }
           }
         }
-      } catch (logErr) {
-        console.error('Error inserting community_members_log:', logErr);
+      } catch (err) {
+        console.error('Error in chat_member handler:', err);
       }
     }
-    // Detect MEMBER LEAVE event
+    // MEMBER LEAVE EVENT
     else if ((oldStatus === 'member' || oldStatus === 'administrator') && (newStatus === 'left' || newStatus === 'kicked')) {
       try {
         await runQuery(
