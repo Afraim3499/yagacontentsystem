@@ -49,6 +49,16 @@ export default function MemberTrackingDeskView() {
   const [newAscChatId, setNewAscChatId] = useState("");
   const [newAscInviteLink, setNewAscInviteLink] = useState("");
 
+  // Edit Associate Modal State
+  const [isEditAssociateModalOpen, setIsEditAssociateModalOpen] = useState(false);
+  const [editingAsc, setEditingAsc] = useState(null);
+  const [editAscName, setEditAscName] = useState("");
+  const [editAscChatId, setEditAscChatId] = useState("");
+  const [editAscInviteLink, setEditAscInviteLink] = useState("");
+  const [editAscFreeRate, setEditAscFreeRate] = useState("0.30");
+  const [editAscPaidPct, setEditAscPaidPct] = useState("5.00");
+  const [editAscStatus, setEditAscStatus] = useState("ACTIVE");
+
   // VIP Upgrade Modal State
   const [isVipModalOpen, setIsVipModalOpen] = useState(false);
   const [selectedMemberForVip, setSelectedMemberForVip] = useState(null);
@@ -127,6 +137,42 @@ export default function MemberTrackingDeskView() {
       setIsAddAssociateModalOpen(false);
     } catch (err) {
       console.error('Add associate error:', err);
+    }
+    setSaving(false);
+  };
+
+  // Open Edit Associate Modal
+  const handleOpenEditAssociate = (asc) => {
+    setEditingAsc(asc);
+    setEditAscName(asc.name || "");
+    setEditAscChatId(asc.telegram_chat_id || "");
+    setEditAscInviteLink(asc.unique_invite_link || "");
+    setEditAscFreeRate(asc.free_commission_rate || "0.30");
+    setEditAscPaidPct(asc.paid_commission_pct || "5.00");
+    setEditAscStatus(asc.status || "ACTIVE");
+    setIsEditAssociateModalOpen(true);
+  };
+
+  // Save Associate Edits
+  const handleSaveAssociateEdit = async (e) => {
+    e.preventDefault();
+    if (!editingAsc || !editAscName.trim() || !editAscInviteLink.trim()) return;
+    setSaving(true);
+    try {
+      await supabase.from('associates').update({
+        name: editAscName.trim(),
+        telegram_chat_id: editAscChatId.trim() || null,
+        unique_invite_link: editAscInviteLink.trim(),
+        free_commission_rate: parseFloat(editAscFreeRate) || 0.30,
+        paid_commission_pct: parseFloat(editAscPaidPct) || 5.00,
+        status: editAscStatus
+      }).eq('id', editingAsc.id);
+
+      await fetchData();
+      setIsEditAssociateModalOpen(false);
+      setEditingAsc(null);
+    } catch (err) {
+      console.error('Error updating associate:', err);
     }
     setSaving(false);
   };
@@ -662,6 +708,20 @@ export default function MemberTrackingDeskView() {
                           <span className="text-emerald-400 font-bold">${totalEarned.toFixed(2)}</span>
                         </div>
                       </div>
+
+                      <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs">
+                        <span className="text-slate-500 text-[10px] font-mono">
+                          Created: {asc.created_at ? new Date(asc.created_at).toLocaleDateString() : 'Active'}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleOpenEditAssociate(asc)}
+                            className="p-1.5 rounded-lg bg-[#38bdf8]/10 text-[#38bdf8] hover:bg-[#38bdf8]/20 border border-[#38bdf8]/30 cursor-pointer flex items-center gap-1 text-[10px] font-bold uppercase"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" /> Edit
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -977,6 +1037,97 @@ export default function MemberTrackingDeskView() {
                 <button type="button" onClick={() => setIsAddAssociateModalOpen(false)} className="px-4 py-2 rounded-xl bg-[#121722] text-slate-300 font-bold cursor-pointer">Cancel</button>
                 <button type="submit" disabled={saving} className="grad-button px-5 py-2.5 rounded-xl font-black shadow-lg cursor-pointer flex items-center gap-2 disabled:opacity-50">
                   Register Associate
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Associate */}
+      {isEditAssociateModalOpen && editingAsc && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="glass-panel max-w-md w-full p-6 space-y-5 border border-[#38bdf8]/40 bg-[#0f141d]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#38bdf8]/20 border border-[#38bdf8]/40 flex items-center justify-center text-[#38bdf8] font-black">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white uppercase">Edit Associate Profile</h3>
+                  <p className="text-xs text-slate-400">Modify details for {editingAsc.id}</p>
+                </div>
+              </div>
+              <button onClick={() => setIsEditAssociateModalOpen(false)} className="text-slate-400 hover:text-white font-mono text-xs cursor-pointer">✕ Close</button>
+            </div>
+
+            <form onSubmit={handleSaveAssociateEdit} className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-bold uppercase tracking-wider block">Associate Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editAscName}
+                  onChange={(e) => setEditAscName(e.target.value)}
+                  placeholder="e.g. Associate Alex"
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-bold uppercase tracking-wider block">Assigned Telegram Unique Invite URL *</label>
+                <input
+                  type="text"
+                  required
+                  value={editAscInviteLink}
+                  onChange={(e) => setEditAscInviteLink(e.target.value)}
+                  placeholder="e.g. https://t.me/+AbCdEfGh123"
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Chat ID (For Direct Alerts)</label>
+                <input
+                  type="text"
+                  value={editAscChatId}
+                  onChange={(e) => setEditAscChatId(e.target.value)}
+                  placeholder="e.g. 987654321"
+                  className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Free Comm ($ / member)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={editAscFreeRate}
+                    onChange={(e) => setEditAscFreeRate(e.target.value)}
+                    placeholder="0.30"
+                    className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Paid Comm %</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={editAscPaidPct}
+                    onChange={(e) => setEditAscPaidPct(e.target.value)}
+                    placeholder="5.00"
+                    className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setIsEditAssociateModalOpen(false)} className="px-4 py-2 rounded-xl bg-[#121722] text-slate-300 font-bold cursor-pointer">Cancel</button>
+                <button type="submit" disabled={saving} className="grad-button px-5 py-2.5 rounded-xl font-black shadow-lg cursor-pointer flex items-center gap-2">
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  Save Associate Changes
                 </button>
               </div>
             </form>
