@@ -16,9 +16,10 @@ export default function Sidebar({ activeTab, setActiveTab, openIssuesCount, mobi
   const menuItems = [
     { id: 'dashboard', label: 'Command Center', icon: LayoutDashboard },
     { id: 'studio', label: 'Content Studio', icon: CalendarDays, badge: '3-Batch' },
+    { id: 'members', label: 'Member Intelligence', icon: Users, badge: 'Live' },
     { id: 'creators', label: 'Creators & Accounts', icon: Users },
     { id: 'playbooks', label: 'Platforms & Playbooks', icon: Layers },
-    { id: 'logs', label: 'Activity Audit Desk', icon: Activity, badge: 'Live' },
+    { id: 'logs', label: 'Activity Audit Desk', icon: Activity },
     { id: 'engagement', label: 'Engagement Hub', icon: MessageSquareCode },
     { id: 'issues', label: 'Issue Resolution Desk', icon: AlertTriangle, count: openIssuesCount, alert: openIssuesCount > 0 },
     { id: 'analytics', label: 'Conversion Analytics', icon: BarChart3 },

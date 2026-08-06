@@ -11,6 +11,7 @@ import EngagementDeskView from './components/views/EngagementDeskView';
 import IssueDeskView from './components/views/IssueDeskView';
 import AnalyticsView from './components/views/AnalyticsView';
 import SettingsView from './components/views/SettingsView';
+import MemberTrackingDeskView from './components/views/MemberTrackingDeskView';
 
 function toCreator(row, voiceRow) {
   return {
@@ -365,6 +366,10 @@ export default function App() {
               dailyBatch={dailyBatch}
               onSendToTeam={handleSendToTeam}
             />
+          )}
+
+          {activeTab === 'members' && (
+            <MemberTrackingDeskView />
           )}
 
           {activeTab === 'creators' && (

@@ -508,6 +508,78 @@ async function handleUpdate(update) {
     }
   }
 
+  if (update.chat_member) {
+    const cm = update.chat_member;
+    const oldStatus = cm.old_chat_member?.status;
+    const newStatus = cm.new_chat_member?.status;
+    const user = cm.new_chat_member?.user || cm.from;
+    const inviteLink = cm.invite_link?.invite_link;
+    const groupTitle = cm.chat?.title || 'Telegram Group';
+    const groupId = cm.chat?.id?.toString() || '';
+
+    // Detect MEMBER JOIN event
+    if ((oldStatus === 'left' || oldStatus === 'kicked' || oldStatus === 'restricted' || !oldStatus) &&
+        (newStatus === 'member' || newStatus === 'administrator' || newStatus === 'creator')) {
+      
+      let associateId = null;
+      let associateName = 'Unattributed / Direct';
+      let commission = 5.00;
+
+      if (inviteLink) {
+        try {
+          const ascRes = await runQuery(`SELECT * FROM public.associates WHERE unique_invite_link = $1 LIMIT 1`, [inviteLink]);
+          if (ascRes.rows.length > 0) {
+            const asc = ascRes.rows[0];
+            associateId = asc.id;
+            associateName = asc.name;
+            commission = Number(asc.commission_per_member || 5.00);
+          }
+        } catch (err) {
+          console.error('Error fetching associate for link:', err);
+        }
+      }
+
+      const logId = `MEM-${Date.now().toString().substring(5)}`;
+      const handle = user.username ? `@${user.username}` : '';
+      const firstName = user.first_name || 'Member';
+
+      try {
+        await runQuery(
+          `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, joined_at, status, commission_amount)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'ACTIVE', $10)`,
+          [logId, user.id.toString(), handle, firstName, associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, commission]
+        );
+        console.log(`🎉 MEMBER JOIN LOGGED: ${firstName} (${user.id}) via ${associateName}`);
+
+        if (associateId) {
+          const ascInfo = await runQuery(`SELECT telegram_chat_id FROM public.associates WHERE id = $1`, [associateId]);
+          const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
+          if (ascChatId) {
+            await apiCall('sendMessage', {
+              chat_id: ascChatId,
+              text: `🎉 *NEW REFERRAL CONVERSION!*\n\nMember *${firstName}* (${handle || user.id}) joined *${groupTitle}* using your unique link.\n\n💰 *Commission Accrued:* \`+$${commission.toFixed(2)}\``,
+              parse_mode: 'Markdown'
+            });
+          }
+        }
+      } catch (logErr) {
+        console.error('Error inserting community_members_log:', logErr);
+      }
+    }
+    // Detect MEMBER LEAVE event
+    else if ((oldStatus === 'member' || oldStatus === 'administrator') && (newStatus === 'left' || newStatus === 'kicked')) {
+      try {
+        await runQuery(
+          `UPDATE public.community_members_log SET status = 'LEFT' WHERE telegram_user_id = $1 AND group_id = $2`,
+          [user.id.toString(), groupId]
+        );
+        console.log(`🔴 MEMBER LEFT: ${user.id} left ${groupTitle}`);
+      } catch (leaveErr) {
+        console.error('Error logging member leave:', leaveErr);
+      }
+    }
+  }
+
   if (update.callback_query) {
     const cb = update.callback_query;
     const chatId = cb.message.chat.id;
