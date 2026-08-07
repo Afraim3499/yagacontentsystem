@@ -617,7 +617,13 @@ async function handleUpdate(update) {
           }
 
           if (inviteLink) {
-            const ascRes = await runQuery(`SELECT * FROM public.associates WHERE unique_invite_link = $1 LIMIT 1`, [inviteLink]);
+            const cleanLink = inviteLink.trim();
+            const linkHash = cleanLink.replace('https://t.me/+', '').replace('https://t.me/joinchat/', '').replace('https://t.me/', '').trim();
+
+            const ascRes = await runQuery(
+              `SELECT * FROM public.associates WHERE unique_invite_link = $1 OR unique_invite_link LIKE $2 LIMIT 1`,
+              [cleanLink, `%${linkHash}%`]
+            );
             if (ascRes.rows.length > 0) {
               const asc = ascRes.rows[0];
               associateId = asc.id;
