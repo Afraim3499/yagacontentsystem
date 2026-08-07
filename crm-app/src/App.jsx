@@ -12,6 +12,7 @@ import IssueDeskView from './components/views/IssueDeskView';
 import AnalyticsView from './components/views/AnalyticsView';
 import SettingsView from './components/views/SettingsView';
 import MemberTrackingDeskView from './components/views/MemberTrackingDeskView';
+import ReviewModerationDeskView from './components/views/ReviewModerationDeskView';
 
 function toCreator(row, voiceRow) {
   return {
@@ -370,6 +371,10 @@ export default function App() {
 
           {activeTab === 'members' && (
             <MemberTrackingDeskView />
+          )}
+
+          {activeTab === 'reviews' && (
+            <ReviewModerationDeskView />
           )}
 
           {activeTab === 'creators' && (
