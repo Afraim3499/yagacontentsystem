@@ -101,14 +101,16 @@ async function registerBotCommands() {
 let offset = 0;
 async function pollUpdates() {
   await registerBotCommands();
-  console.log('🚀 Telegram Long Polling Active! Listening for creator updates...');
+  console.log('🚀 Telegram Long Polling Active! Listening for creator & joinee updates (chat_member enabled)...');
+  const allowedUpdates = JSON.stringify(["message", "callback_query", "chat_member", "my_chat_member"]);
+
   while (true) {
     try {
-      const res = await fetch(`${API_BASE}/getUpdates?offset=${offset}&timeout=30`).then(r => r.json());
+      const res = await fetch(`${API_BASE}/getUpdates?offset=${offset}&timeout=30&allowed_updates=${encodeURIComponent(allowedUpdates)}`).then(r => r.json());
       if (res.ok && res.result && res.result.length > 0) {
         for (const update of res.result) {
           offset = update.update_id + 1;
-          console.log(`📩 Incoming Update [${update.update_id}]:`, update.message?.text || update.callback_query?.data || 'Event');
+          console.log(`📩 Incoming Update [${update.update_id}]:`, update.message?.text || update.callback_query?.data || update.chat_member ? `Joinee ${update.chat_member?.new_chat_member?.user?.first_name}` : 'Event');
           try {
             await handleUpdate(update);
           } catch (handlerErr) {
