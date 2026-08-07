@@ -550,74 +550,61 @@ async function handleUpdate(update) {
         const existingRes = await runQuery(`SELECT * FROM public.community_members_log WHERE telegram_user_id = $1 LIMIT 1`, [user.id.toString()]);
 
         if (isPaidGroup) {
-          // --- 💎 PAID VIP GROUP JOIN ATTRIBUTION & NOTIFICATIONS ---
-          let paidCommissionPct = 5.00;
-          const ruleRes = await runQuery(`SELECT paid_commission_pct FROM public.commission_rules WHERE id = 'RULE-DEFAULT' LIMIT 1`);
-          if (ruleRes.rows.length > 0) {
-            paidCommissionPct = Number(ruleRes.rows[0].paid_commission_pct || 5.00);
-          }
-
+          // --- 💎 PAID VIP GROUP JOIN ATTRIBUTION ---
           let associateId = null;
           let associateName = 'Direct VIP';
-          let associateChatId = null;
-          let subValue = 200.00;
 
           if (existingRes.rows.length > 0) {
             const ex = existingRes.rows[0];
             associateId = ex.associate_id;
             associateName = ex.associate_name || 'Direct VIP';
-            subValue = Number(ex.paid_subscription_value) > 0 ? Number(ex.paid_subscription_value) : 200.00;
           } else if (inviteLink) {
             const ascRes = await runQuery(`SELECT * FROM public.associates WHERE unique_invite_link = $1 LIMIT 1`, [inviteLink]);
             if (ascRes.rows.length > 0) {
               associateId = ascRes.rows[0].id;
               associateName = ascRes.rows[0].name;
-              associateChatId = ascRes.rows[0].telegram_chat_id;
             }
           }
-
-          const paidComm = subValue * (paidCommissionPct / 100);
 
           if (existingRes.rows.length > 0) {
             await runQuery(
               `UPDATE public.community_members_log 
                SET member_tier = 'PAID_VIP', 
                    paid_group_joined_at = NOW(), 
-                   paid_subscription_value = $1, 
-                   paid_commission = $2, 
                    status = 'ACTIVE' 
-               WHERE telegram_user_id = $3`,
-              [subValue, paidComm, user.id.toString()]
+               WHERE telegram_user_id = $1`,
+              [user.id.toString()]
             );
           } else {
             const logId = `MEM-${Date.now().toString().substring(5)}`;
             await runQuery(
               `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, group_id, group_name, paid_group_joined_at, member_tier, status, paid_subscription_value, paid_commission)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'PAID_VIP', 'ACTIVE', $9, $10)`,
-              [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, groupId, groupTitle, subValue, paidComm]
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'PAID_VIP', 'ACTIVE', 0.00, 0.00)`,
+              [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, groupId, groupTitle]
             );
           }
 
           console.log(`💎 PAID VIP JOIN LOGGED: ${user.first_name} (${user.id}) attributed to ${associateName}`);
 
-          // 1. BROADCAST TELEGRAM ALERT TO SYSTEM OWNER(S)
-          await broadcastToOwners((ownerName) => 
-            `💎 *NEW VIP MEMBER JOINED!*\n\nHi *${ownerName}*,\nMember *${user.first_name}* (${user.username ? '@' + user.username : 'ID: ' + user.id}) has joined *${groupTitle}*!\n\n📌 *Attributed To:* ${associateName}\n💰 *Subscription Value:* \`$${subValue.toFixed(2)}\``
-          );
+          // INLINE KEYBOARD FOR OWNER PACKAGE CONFIRMATION
+          const packageKeyboard = {
+            inline_keyboard: [
+              [
+                { text: '💵 $250 (Quarterly)', callback_data: `confirm_sub:${user.id}:250` },
+                { text: '⭐️ $350 (Half-Yearly)', callback_data: `confirm_sub:${user.id}:350` }
+              ],
+              [
+                { text: '🎁 $700 (Yearly)', callback_data: `confirm_sub:${user.id}:700` },
+                { text: '⚡️ Custom $500', callback_data: `confirm_sub:${user.id}:500` }
+              ]
+            ]
+          };
 
-          // 2. SEND DIRECT TELEGRAM DM TO ASSOCIATE (IF TELEGRAM CHAT ID IS CONFIGURED)
-          if (associateId && !associateChatId) {
-            const ascInfo = await runQuery(`SELECT telegram_chat_id FROM public.associates WHERE id = $1`, [associateId]);
-            associateChatId = ascInfo.rows[0]?.telegram_chat_id;
-          }
-
-          if (associateChatId) {
-            await apiCall('sendMessage', {
-              chat_id: associateChatId,
-              text: `🎉 *NEW VIP SUBSCRIBER CONVERSION!*\n\nHi *${associateName}*,\nMember *${user.first_name}* (${user.username ? '@' + user.username : 'Member'}) just joined the *PAID VIP Group* using your associate link!\n\n💰 *Commission Earned:* \`+$${paidComm.toFixed(2)}\``,
-              parse_mode: 'Markdown'
-            });
-          }
+          // BROADCAST TELEGRAM CONFIRMATION CARD TO SYSTEM OWNER(S)
+          await broadcastToOwners((ownerName) => ({
+            text: `💎 *NEW VIP MEMBER JOINED! NEED PACKAGE CONFIRMATION*\n\nHi *${ownerName}*,\nMember *${user.first_name}* (${user.username ? '@' + user.username : 'ID: ' + user.id}) has joined *${groupTitle}*!\n\n📌 *Attributed Associate:* ${associateName}\n\n👇 *Select the package tier paid by this user:*`,
+            reply_markup: packageKeyboard
+          }));
         } else {
           // --- 🆓 FREE GROUP JOIN ATTRIBUTION ---
           let associateId = null;
@@ -711,6 +698,60 @@ async function handleUpdate(update) {
       const issueId = `ISS-${Date.now().toString().substring(5)}`;
       await runQuery(`INSERT INTO public.issue_tickets (id, creator_id, creator_name, platform_id, issue_type, description, status) VALUES ($1, $2, $3, 'PL-X', 'Telegram Report', 'Reported issue', 'OPEN')`, [issueId, parts[2] || 'UNKNOWN', cb.from.first_name]);
       await apiCall('answerCallbackQuery', { callback_query_id: cb.id, text: `🚨 Issue ${issueId} reported!`, show_alert: true });
+    }
+    else if (data.startsWith('confirm_sub:')) {
+      const parts = data.split(':');
+      const targetUserId = parts[1];
+      const subAmount = Number(parts[2]) || 200.00;
+
+      let paidCommissionPct = 5.00;
+      const ruleRes = await runQuery(`SELECT paid_commission_pct FROM public.commission_rules WHERE id = 'RULE-DEFAULT' LIMIT 1`);
+      if (ruleRes.rows.length > 0) {
+        paidCommissionPct = Number(ruleRes.rows[0].paid_commission_pct || 5.00);
+      }
+      const paidComm = subAmount * (paidCommissionPct / 100);
+
+      const memRes = await runQuery(
+        `UPDATE public.community_members_log 
+         SET paid_subscription_value = $1, 
+             paid_commission = $2, 
+             member_tier = 'PAID_VIP',
+             status = 'ACTIVE' 
+         WHERE telegram_user_id = $3
+         RETURNING first_name, associate_id, associate_name`,
+        [subAmount, paidComm, targetUserId]
+      );
+
+      const mem = memRes.rows[0];
+      const memberName = mem?.first_name || 'VIP Member';
+      const associateId = mem?.associate_id;
+      const associateName = mem?.associate_name || 'Direct VIP';
+
+      await apiCall('answerCallbackQuery', { 
+        callback_query_id: cb.id, 
+        text: `✅ Confirmed $${subAmount} subscription! Commission $${paidComm.toFixed(2)} updated.`, 
+        show_alert: true 
+      });
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `✅ *SUBSCRIPTION CONFIRMED BY OWNER*\n\nMember *${memberName}* subscription confirmed at \`$${subAmount.toFixed(2)}\`!\n📌 Attributed Associate: *${associateName}*\n💰 5% Commission Logged: \`+$${paidComm.toFixed(2)}\``,
+        parse_mode: 'Markdown'
+      });
+
+      if (associateId) {
+        const ascInfo = await runQuery(`SELECT telegram_chat_id, name FROM public.associates WHERE id = $1`, [associateId]);
+        const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
+        const ascName = ascInfo.rows[0]?.name || associateName;
+
+        if (ascChatId) {
+          await apiCall('sendMessage', {
+            chat_id: ascChatId,
+            text: `🎉 *CONFIRMED VIP COMMISSION BONUS!*\n\nHi *${ascName}*,\nMember *${memberName}* (invited by your link) was confirmed for a \`$${subAmount.toFixed(2)}\` VIP Subscription!\n\n💰 *Earned 5% Commission Bonus:* \`+$${paidComm.toFixed(2)}\``,
+            parse_mode: 'Markdown'
+          });
+        }
+      }
     }
   }
 }
