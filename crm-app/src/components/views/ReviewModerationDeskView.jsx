@@ -410,11 +410,17 @@ export default function ReviewModerationDeskView() {
                     <p className="text-xs text-slate-300 leading-relaxed font-sans">{rev.content}</p>
                   </div>
 
-                  {/* Screenshot Link */}
+                  {/* Screenshot Preview */}
                   {rev.screenshot_url && (
-                    <a href={rev.screenshot_url} target="_blank" rel="noreferrer" className="block text-xs font-mono text-[#38bdf8] hover:underline">
-                      🔗 View Verified Setup Screenshot
-                    </a>
+                    <div className="pt-1">
+                      <a href={rev.screenshot_url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-white/10 hover:border-[#38bdf8]/50 transition-colors">
+                        <img 
+                          src={rev.screenshot_url} 
+                          alt="Verified Setup Screenshot" 
+                          className="w-full max-h-36 object-cover rounded-xl"
+                        />
+                      </a>
+                    </div>
                   )}
 
                   {/* Footer Action Buttons */}
