@@ -113,6 +113,66 @@ async function broadcastToOwners(messageFn) {
   }
 }
 
+// 1000% BULLETPROOF ASSOCIATE RESOLVER
+async function resolveAssociateFromLink(rawLinkObj) {
+  if (!rawLinkObj) return { associateId: null, associateName: 'Unattributed / Direct', freeComm: 0.30 };
+
+  const rawUrl = typeof rawLinkObj === 'string' ? rawLinkObj : (rawLinkObj.invite_link || '');
+  const linkName = typeof rawLinkObj === 'object' ? (rawLinkObj.name || '') : '';
+
+  let associateId = null;
+  let associateName = 'Unattributed / Direct';
+  let freeComm = 0.30;
+
+  if (rawUrl) {
+    const cleanUrl = rawUrl.trim();
+    // Extract hash e.g. "JFf8kBf01mg3OTg1" from any URL structure
+    const hashMatches = cleanUrl.match(/[\+\/]?([a-zA-Z0-9_-]{10,})/);
+    const linkHash = hashMatches ? hashMatches[1] : cleanUrl.replace(/[^a-zA-Z0-9_-]/g, '');
+
+    // 1. Direct SQL Hash / URL Match
+    let ascRes = await runQuery(
+      `SELECT * FROM public.associates WHERE unique_invite_link = $1 OR unique_invite_link ILIKE $2 LIMIT 1`,
+      [cleanUrl, `%${linkHash}%`]
+    );
+
+    // 2. Fallback: Match by Link Name if provided
+    if (ascRes.rows.length === 0 && linkName) {
+      ascRes = await runQuery(
+        `SELECT * FROM public.associates WHERE name ILIKE $1 LIMIT 1`,
+        [`%${linkName.trim()}%`]
+      );
+    }
+
+    // 3. Fallback: In-Memory regex scan across all associates
+    if (ascRes.rows.length === 0) {
+      const allAsc = await runQuery(`SELECT * FROM public.associates`);
+      for (const asc of allAsc.rows) {
+        if (!asc.unique_invite_link) continue;
+        const ascHashMatches = asc.unique_invite_link.match(/[\+\/]?([a-zA-Z0-9_-]{10,})/);
+        const ascHash = ascHashMatches ? ascHashMatches[1] : '';
+        if (ascHash && linkHash && (ascHash.includes(linkHash) || linkHash.includes(ascHash))) {
+          associateId = asc.id;
+          associateName = asc.name;
+          if (Number(asc.free_commission_rate) > 0) freeComm = Number(asc.free_commission_rate);
+          console.log(`🎯 BULLETPROOF IN-MEMORY LINK MATCH: ${rawUrl} matched to ${asc.name} (${asc.id})`);
+          return { associateId, associateName, freeComm };
+        }
+      }
+    }
+
+    if (ascRes.rows.length > 0) {
+      const asc = ascRes.rows[0];
+      associateId = asc.id;
+      associateName = asc.name;
+      if (Number(asc.free_commission_rate) > 0) freeComm = Number(asc.free_commission_rate);
+      console.log(`🎯 BULLETPROOF SQL LINK MATCH: ${rawUrl} matched to ${asc.name} (${asc.id})`);
+    }
+  }
+
+  return { associateId, associateName, freeComm };
+}
+
 async function triggerStaggered3BatchDispatch(dateStr) {
   const dayId = `DAY-${dateStr.replace(/-/g, '')}`;
 
@@ -535,31 +595,12 @@ async function handleUpdate(update) {
 
     console.log(`📩 CHAT_JOIN_REQUEST EVENT FOR ${user.first_name} (${user.id}) via ${inviteLink}`);
 
-    // Auto approve member immediately (0.1s)
     await apiCall('approveChatJoinRequest', {
       chat_id: groupId,
       user_id: user.id
     });
 
-    let associateId = null;
-    let associateName = 'Unattributed / Direct';
-    let freeComm = 0.30;
-
-    if (inviteLink) {
-      const cleanLink = inviteLink.trim();
-      const linkHash = cleanLink.replace('https://t.me/+', '').replace('https://t.me/joinchat/', '').replace('https://t.me/', '').trim();
-      const ascRes = await runQuery(
-        `SELECT * FROM public.associates WHERE unique_invite_link = $1 OR unique_invite_link LIKE $2 LIMIT 1`,
-        [cleanLink, `%${linkHash}%`]
-      );
-      if (ascRes.rows.length > 0) {
-        associateId = ascRes.rows[0].id;
-        associateName = ascRes.rows[0].name;
-        if (Number(ascRes.rows[0].free_commission_rate) > 0) {
-          freeComm = Number(ascRes.rows[0].free_commission_rate);
-        }
-      }
-    }
+    const { associateId, associateName, freeComm } = await resolveAssociateFromLink(req.invite_link || inviteLink);
 
     const logId = `MEM-${Date.now().toString().substring(5)}`;
     await runQuery(
@@ -583,38 +624,27 @@ async function handleUpdate(update) {
     const groupId = cm.chat?.id?.toString() || '';
 
     console.log(`📩 CHAT_MEMBER EVENT FOR ${user.first_name} (${user.id}): old=${oldStatus} -> new=${newStatus}`);
-    console.log(`📩 RAW TELEGRAM INVITE_LINK OBJECT:`, JSON.stringify(cm.invite_link || null));
-    console.log(`📩 EXTRACTED INVITE_LINK:`, inviteLink || 'NONE');
 
     // MEMBER JOIN EVENT
     if ((oldStatus === 'left' || oldStatus === 'kicked' || oldStatus === 'restricted' || !oldStatus) &&
         (newStatus === 'member' || newStatus === 'administrator' || newStatus === 'creator')) {
       
       try {
-        // Check group type from group_config
         const groupCfgRes = await runQuery(`SELECT group_type FROM public.group_config WHERE telegram_group_id = $1 LIMIT 1`, [groupId]);
         const isPaidGroup = (groupCfgRes.rows[0]?.group_type === 'PAID_GROUP') || 
                             groupTitle.toLowerCase().includes('vip') || 
                             groupTitle.toLowerCase().includes('paid');
 
-        // Check if member already exists in community_members_log
         const existingRes = await runQuery(`SELECT * FROM public.community_members_log WHERE telegram_user_id = $1 LIMIT 1`, [user.id.toString()]);
 
         if (isPaidGroup) {
           // --- 💎 PAID VIP GROUP JOIN ATTRIBUTION ---
-          let associateId = null;
-          let associateName = 'Direct VIP';
+          let { associateId, associateName } = await resolveAssociateFromLink(cm.invite_link || inviteLink);
 
           if (existingRes.rows.length > 0) {
             const ex = existingRes.rows[0];
-            associateId = ex.associate_id;
-            associateName = ex.associate_name || 'Direct VIP';
-          } else if (inviteLink) {
-            const ascRes = await runQuery(`SELECT * FROM public.associates WHERE unique_invite_link = $1 LIMIT 1`, [inviteLink]);
-            if (ascRes.rows.length > 0) {
-              associateId = ascRes.rows[0].id;
-              associateName = ascRes.rows[0].name;
-            }
+            associateId = associateId || ex.associate_id;
+            associateName = (associateName !== 'Unattributed / Direct') ? associateName : (ex.associate_name || 'Direct VIP');
           }
 
           if (existingRes.rows.length > 0) {
@@ -637,7 +667,6 @@ async function handleUpdate(update) {
 
           console.log(`💎 PAID VIP JOIN LOGGED: ${user.first_name} (${user.id}) attributed to ${associateName}`);
 
-          // INLINE KEYBOARD FOR OWNER PACKAGE CONFIRMATION
           const packageKeyboard = {
             inline_keyboard: [
               [
@@ -651,39 +680,13 @@ async function handleUpdate(update) {
             ]
           };
 
-          // BROADCAST TELEGRAM CONFIRMATION CARD TO SYSTEM OWNER(S)
           await broadcastToOwners((ownerName) => ({
             text: `💎 *NEW VIP MEMBER JOINED! NEED PACKAGE CONFIRMATION*\n\nHi *${ownerName}*,\nMember *${user.first_name}* (${user.username ? '@' + user.username : 'ID: ' + user.id}) has joined *${groupTitle}*!\n\n📌 *Attributed Associate:* ${associateName}\n\n👇 *Select the package tier paid by this user:*`,
             reply_markup: packageKeyboard
           }));
         } else {
           // --- 🆓 FREE GROUP JOIN ATTRIBUTION ---
-          let associateId = null;
-          let associateName = 'Unattributed / Direct';
-          let freeComm = 0.30; // $30 / 100 members
-
-          const ruleRes = await runQuery(`SELECT free_rate_per_100 FROM public.commission_rules WHERE id = 'RULE-DEFAULT' LIMIT 1`);
-          if (ruleRes.rows.length > 0) {
-            freeComm = Number(ruleRes.rows[0].free_rate_per_100 || 30.00) / 100;
-          }
-
-          if (inviteLink) {
-            const cleanLink = inviteLink.trim();
-            const linkHash = cleanLink.replace('https://t.me/+', '').replace('https://t.me/joinchat/', '').replace('https://t.me/', '').trim();
-
-            const ascRes = await runQuery(
-              `SELECT * FROM public.associates WHERE unique_invite_link = $1 OR unique_invite_link LIKE $2 LIMIT 1`,
-              [cleanLink, `%${linkHash}%`]
-            );
-            if (ascRes.rows.length > 0) {
-              const asc = ascRes.rows[0];
-              associateId = asc.id;
-              associateName = asc.name;
-              if (Number(asc.free_commission_rate) > 0) {
-                freeComm = Number(asc.free_commission_rate);
-              }
-            }
-          }
+          const { associateId, associateName, freeComm } = await resolveAssociateFromLink(cm.invite_link || inviteLink);
 
           if (existingRes.rows.length === 0) {
             const logId = `MEM-${Date.now().toString().substring(5)}`;
