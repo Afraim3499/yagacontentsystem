@@ -526,6 +526,53 @@ async function handleUpdate(update) {
     }
   }
 
+  if (update.chat_join_request) {
+    const req = update.chat_join_request;
+    const user = req.from;
+    const inviteLink = req.invite_link?.invite_link;
+    const groupTitle = req.chat?.title || 'Telegram Group';
+    const groupId = req.chat?.id?.toString() || '';
+
+    console.log(`📩 CHAT_JOIN_REQUEST EVENT FOR ${user.first_name} (${user.id}) via ${inviteLink}`);
+
+    // Auto approve member immediately (0.1s)
+    await apiCall('approveChatJoinRequest', {
+      chat_id: groupId,
+      user_id: user.id
+    });
+
+    let associateId = null;
+    let associateName = 'Unattributed / Direct';
+    let freeComm = 0.30;
+
+    if (inviteLink) {
+      const cleanLink = inviteLink.trim();
+      const linkHash = cleanLink.replace('https://t.me/+', '').replace('https://t.me/joinchat/', '').replace('https://t.me/', '').trim();
+      const ascRes = await runQuery(
+        `SELECT * FROM public.associates WHERE unique_invite_link = $1 OR unique_invite_link LIKE $2 LIMIT 1`,
+        [cleanLink, `%${linkHash}%`]
+      );
+      if (ascRes.rows.length > 0) {
+        associateId = ascRes.rows[0].id;
+        associateName = ascRes.rows[0].name;
+        if (Number(ascRes.rows[0].free_commission_rate) > 0) {
+          freeComm = Number(ascRes.rows[0].free_commission_rate);
+        }
+      }
+    }
+
+    const logId = `MEM-${Date.now().toString().substring(5)}`;
+    await runQuery(
+      `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status, free_commission)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'FREE_ONLY', 'ACTIVE', $10)
+       ON CONFLICT (telegram_user_id) DO UPDATE SET associate_id = EXCLUDED.associate_id, associate_name = EXCLUDED.associate_name, used_invite_link = EXCLUDED.used_invite_link, status = 'ACTIVE'`,
+      [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, freeComm]
+    );
+
+    console.log(`🎉 APPROVED & ATTRIBUTED MEMBER JOIN REQUEST: ${user.first_name} -> ${associateName}`);
+    return;
+  }
+
   if (update.chat_member) {
     const cm = update.chat_member;
     const oldStatus = cm.old_chat_member?.status;
@@ -534,6 +581,10 @@ async function handleUpdate(update) {
     const inviteLink = cm.invite_link?.invite_link;
     const groupTitle = cm.chat?.title || 'Telegram Group';
     const groupId = cm.chat?.id?.toString() || '';
+
+    console.log(`📩 CHAT_MEMBER EVENT FOR ${user.first_name} (${user.id}): old=${oldStatus} -> new=${newStatus}`);
+    console.log(`📩 RAW TELEGRAM INVITE_LINK OBJECT:`, JSON.stringify(cm.invite_link || null));
+    console.log(`📩 EXTRACTED INVITE_LINK:`, inviteLink || 'NONE');
 
     // MEMBER JOIN EVENT
     if ((oldStatus === 'left' || oldStatus === 'kicked' || oldStatus === 'restricted' || !oldStatus) &&

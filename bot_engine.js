@@ -101,8 +101,8 @@ async function registerBotCommands() {
 let offset = 0;
 async function pollUpdates() {
   await registerBotCommands();
-  console.log('🚀 Telegram Long Polling Active! Listening for creator & joinee updates (chat_member enabled)...');
-  const allowedUpdates = JSON.stringify(["message", "callback_query", "chat_member", "my_chat_member"]);
+  console.log('🚀 Telegram Long Polling Active! Listening for creator, joinee & chat_join_request updates...');
+  const allowedUpdates = JSON.stringify(["message", "callback_query", "chat_member", "my_chat_member", "chat_join_request"]);
 
   while (true) {
     try {
