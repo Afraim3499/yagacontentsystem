@@ -13,6 +13,7 @@ import AnalyticsView from './components/views/AnalyticsView';
 import SettingsView from './components/views/SettingsView';
 import MemberTrackingDeskView from './components/views/MemberTrackingDeskView';
 import ReviewModerationDeskView from './components/views/ReviewModerationDeskView';
+import CrmLockScreen from './components/CrmLockScreen';
 
 function toCreator(row, voiceRow) {
   return {
@@ -104,6 +105,9 @@ function toTask(row) {
 }
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return sessionStorage.getItem("yaga_crm_authenticated") === "true";
+  });
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -303,6 +307,10 @@ export default function App() {
   };
 
   const openIssuesCount = issues.filter(i => i.status === 'OPEN').length;
+
+  if (!isAuthenticated) {
+    return <CrmLockScreen onAuthenticated={() => setIsAuthenticated(true)} />;
+  }
 
   if (loading) {
     return (

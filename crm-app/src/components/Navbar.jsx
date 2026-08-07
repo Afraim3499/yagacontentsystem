@@ -133,7 +133,7 @@ export default function Navbar({ systemSettings, activeBatch, mobileMenuOpen, se
           <span>{systemSettings.botUsername}</span>
         </div>
 
-        {/* Profile Avatar */}
+        {/* Profile Avatar & Lock Button */}
         <div className="flex items-center gap-2 pl-2 border-l border-white/10">
           <div className="w-8 h-8 rounded-full bg-[#121722] border border-[#e39e2e]/40 flex items-center justify-center text-xs font-black text-[#e39e2e]">
             YC
@@ -142,6 +142,17 @@ export default function Navbar({ systemSettings, activeBatch, mobileMenuOpen, se
             <div className="text-xs font-bold text-white">Yaga Owner</div>
             <div className="text-[10px] text-slate-400 font-medium">Chief Engineer</div>
           </div>
+
+          <button
+            onClick={() => {
+              sessionStorage.removeItem("yaga_crm_authenticated");
+              window.location.reload();
+            }}
+            className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 cursor-pointer ml-1"
+            title="Lock CRM Administrative Session"
+          >
+            🔒
+          </button>
         </div>
       </div>
     </header>
