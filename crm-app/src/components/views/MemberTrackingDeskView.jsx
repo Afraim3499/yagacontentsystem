@@ -224,6 +224,17 @@ export default function MemberTrackingDeskView() {
     setPackages(prev => prev.filter(p => p.id !== pkgId));
   };
 
+  // Delete Member Entry
+  const handleDeleteMember = async (memberLogId, memberName) => {
+    if (!confirm(`Are you sure you want to delete member log entry for "${memberName}"?`)) return;
+    try {
+      await supabase.from('community_members_log').delete().eq('id', memberLogId);
+      setMemberLog(prev => prev.filter(m => m.id !== memberLogId));
+    } catch (err) {
+      console.error('Delete member error:', err);
+    }
+  };
+
   // Save Global Commission Rules
   const handleSaveCommissionRules = async () => {
     setSaving(true);
@@ -618,7 +629,7 @@ export default function MemberTrackingDeskView() {
                             <div>Free: {item.free_group_joined_at ? new Date(item.free_group_joined_at).toLocaleDateString() : 'N/A'}</div>
                             {item.paid_group_joined_at && <div className="text-[#e39e2e]">VIP: {new Date(item.paid_group_joined_at).toLocaleDateString()}</div>}
                           </td>
-                          <td className="p-3.5">
+                          <td className="p-3.5 flex items-center gap-2">
                             {!isVip && (
                               <button
                                 onClick={() => {
@@ -631,6 +642,13 @@ export default function MemberTrackingDeskView() {
                                 <Sparkles className="w-3 h-3" /> Upgrade VIP
                               </button>
                             )}
+                            <button
+                              onClick={() => handleDeleteMember(item.id, item.first_name || 'Member')}
+                              className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all cursor-pointer flex items-center gap-1"
+                              title="Delete Member Entry"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </td>
                         </tr>
                       );
