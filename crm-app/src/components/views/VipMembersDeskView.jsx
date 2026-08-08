@@ -18,6 +18,10 @@ import {
   Edit3,
   UserCheck,
   Calendar,
+  Clock,
+  AlertTriangle,
+  RotateCw,
+  Gift,
   X
 } from 'lucide-react';
 
@@ -31,7 +35,7 @@ export default function VipMembersDeskView() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAssociate, setSelectedAssociate] = useState("ALL");
   const [selectedPackage, setSelectedPackage] = useState("ALL");
-  const [selectedSource, setSelectedSource] = useState("ALL");
+  const [selectedStatus, setSelectedStatus] = useState("ALL"); // ALL | ACTIVE | EXPIRING_SOON | EXPIRED
 
   // Manual VIP Enroll Modal State
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
@@ -39,12 +43,14 @@ export default function VipMembersDeskView() {
   const [telegramHandle, setTelegramHandle] = useState("");
   const [telegramUserId, setTelegramUserId] = useState("");
   const [targetAssociateId, setTargetAssociateId] = useState("");
-  const [subscriptionValue, setSubscriptionValue] = useState("700");
+  const [subscriptionValue, setSubscriptionValue] = useState("350");
+  const [durationMonths, setDurationMonths] = useState("8"); // Default 8 Mos Promo
 
-  // Edit Tier Modal State
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingMember, setEditingMember] = useState(null);
-  const [editValue, setEditValue] = useState("700");
+  // Renew Subscription Modal State
+  const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
+  const [renewingMember, setRenewingMember] = useState(null);
+  const [renewTierValue, setRenewTierValue] = useState("350");
+  const [renewDurationMonths, setRenewDurationMonths] = useState("8");
 
   useEffect(() => {
     fetchVipData();
@@ -53,7 +59,6 @@ export default function VipMembersDeskView() {
   async function fetchVipData() {
     setLoading(true);
     try {
-      // Fetch VIP Members (PAID_VIP or PAID_VIP_PENDING)
       const { data: memData, error: memErr } = await supabase
         .from('community_members_log')
         .select('*')
@@ -63,7 +68,6 @@ export default function VipMembersDeskView() {
       if (memErr) console.error('Error fetching VIP members:', memErr);
       else setVipMembers(memData || []);
 
-      // Fetch Associates
       const { data: ascData, error: ascErr } = await supabase
         .from('associates')
         .select('*')
@@ -88,7 +92,6 @@ export default function VipMembersDeskView() {
   // Filtered VIP Members
   const filteredVips = useMemo(() => {
     return vipMembers.filter(m => {
-      // Search
       const search = searchTerm.toLowerCase().trim();
       const matchesSearch = !search || 
         (m.first_name && m.first_name.toLowerCase().includes(search)) ||
@@ -96,10 +99,8 @@ export default function VipMembersDeskView() {
         (m.telegram_user_id && m.telegram_user_id.includes(search)) ||
         (m.associate_name && m.associate_name.toLowerCase().includes(search));
 
-      // Associate Filter
       const matchesAssociate = selectedAssociate === "ALL" || m.associate_id === selectedAssociate || (selectedAssociate === "DIRECT" && !m.associate_id);
 
-      // Package Filter
       const val = Number(m.paid_subscription_value || 0);
       let matchesPackage = true;
       if (selectedPackage === "250") matchesPackage = val === 250;
@@ -107,35 +108,40 @@ export default function VipMembersDeskView() {
       else if (selectedPackage === "700") matchesPackage = val === 700;
       else if (selectedPackage === "CUSTOM") matchesPackage = val > 0 && val !== 250 && val !== 350 && val !== 700;
 
-      // Source Filter
-      const matchesSource = selectedSource === "ALL" || m.enrollment_source === selectedSource;
+      // Status Filter (ACTIVE | EXPIRING_SOON | EXPIRED)
+      const matchesStatus = selectedStatus === "ALL" || (m.subscription_status || 'ACTIVE') === selectedStatus;
 
-      return matchesSearch && matchesAssociate && matchesPackage && matchesSource;
+      return matchesSearch && matchesAssociate && matchesPackage && matchesStatus;
     });
-  }, [vipMembers, searchTerm, selectedAssociate, selectedPackage, selectedSource]);
+  }, [vipMembers, searchTerm, selectedAssociate, selectedPackage, selectedStatus]);
 
   // Overall Stat Calculations
   const stats = useMemo(() => {
     let totalRevenue = 0;
     let totalCommission = 0;
-    let manualCount = 0;
-    let autoCount = 0;
+    let activeCount = 0;
+    let expiringCount = 0;
+    let expiredCount = 0;
 
     vipMembers.forEach(m => {
       const val = Number(m.paid_subscription_value || 0);
       const comm = Number(m.paid_commission || (val * 0.05));
       totalRevenue += val;
       totalCommission += comm;
-      if (m.enrollment_source === 'OWNER_MANUAL_ENROLL') manualCount++;
-      else autoCount++;
+
+      const st = m.subscription_status || 'ACTIVE';
+      if (st === 'EXPIRING_SOON') expiringCount++;
+      else if (st === 'EXPIRED') expiredCount++;
+      else activeCount++;
     });
 
     return {
       totalCount: vipMembers.length,
       totalRevenue,
       totalCommission,
-      manualCount,
-      autoCount
+      activeCount,
+      expiringCount,
+      expiredCount
     };
   }, [vipMembers]);
 
@@ -144,14 +150,19 @@ export default function VipMembersDeskView() {
     e.preventDefault();
     if (!memberName) return alert('Please enter member name.');
 
-    const subVal = Number(subscriptionValue) || 700;
+    const subVal = Number(subscriptionValue) || 350;
     const commVal = Number((subVal * 0.05).toFixed(2));
+    const months = Number(durationMonths) || 6;
 
     const selectedAscObj = associates.find(a => a.id === targetAssociateId);
     const ascName = selectedAscObj ? selectedAscObj.name : 'Unattributed / Direct';
 
     const userId = telegramUserId ? telegramUserId.trim() : `USR-${Date.now().toString().substring(6)}`;
     const logId = `MEM-${Date.now().toString().substring(5)}`;
+
+    const now = new Date();
+    const expDate = new Date(now);
+    expDate.setMonth(expDate.getMonth() + months);
 
     const { error } = await supabase.from('community_members_log').insert([{
       id: logId,
@@ -165,15 +176,18 @@ export default function VipMembersDeskView() {
       paid_commission: commVal,
       status: 'ACTIVE',
       enrollment_source: 'OWNER_MANUAL_ENROLL',
-      paid_group_joined_at: new Date().toISOString(),
+      paid_group_joined_at: now.toISOString(),
       group_name: 'High Table (Paid VIP)',
-      group_id: '-1002607815374'
+      group_id: '-1002607815374',
+      subscription_duration_months: months,
+      subscription_expiration_date: expDate.toISOString(),
+      subscription_status: 'ACTIVE'
     }]);
 
     if (error) {
       alert('Error enrolling VIP member: ' + error.message);
     } else {
-      alert(`🎉 Successfully Enrolled VIP Member: ${memberName} ($${subVal} Tier)!`);
+      alert(`🎉 Successfully Enrolled VIP Member: ${memberName} ($${subVal} Tier - ${months} Months)!`);
       setIsEnrollModalOpen(false);
       setMemberName("");
       setTelegramHandle("");
@@ -183,27 +197,34 @@ export default function VipMembersDeskView() {
     }
   }
 
-  // Edit Tier Handler
-  async function handleSaveEditTier(e) {
+  // Renewal Handler
+  async function handleRenewSubscription(e) {
     e.preventDefault();
-    if (!editingMember) return;
+    if (!renewingMember) return;
 
-    const val = Number(editValue) || 0;
-    const comm = Number((val * 0.05).toFixed(2));
+    const subVal = Number(renewTierValue) || 350;
+    const commVal = Number((subVal * 0.05).toFixed(2));
+    const months = Number(renewDurationMonths) || 6;
+
+    const now = new Date();
+    const newExpDate = new Date(now);
+    newExpDate.setMonth(newExpDate.getMonth() + months);
 
     const { error } = await supabase.from('community_members_log').update({
-      paid_subscription_value: val,
-      paid_commission: comm,
-      member_tier: 'PAID_VIP',
+      paid_subscription_value: subVal,
+      paid_commission: commVal,
+      subscription_duration_months: months,
+      subscription_expiration_date: newExpDate.toISOString(),
+      subscription_status: 'ACTIVE',
       status: 'ACTIVE'
-    }).eq('id', editingMember.id);
+    }).eq('id', renewingMember.id);
 
     if (error) {
-      alert('Error updating tier: ' + error.message);
+      alert('Error renewing subscription: ' + error.message);
     } else {
-      alert(`✅ Updated subscription tier for ${editingMember.first_name} to $${val}!`);
-      setIsEditModalOpen(false);
-      setEditingMember(null);
+      alert(`🎉 Renewed ${renewingMember.first_name}'s VIP Subscription for ${months} Months (Expires: ${newExpDate.toLocaleDateString()})!`);
+      setIsRenewModalOpen(false);
+      setRenewingMember(null);
       fetchVipData();
     }
   }
@@ -223,15 +244,17 @@ export default function VipMembersDeskView() {
   // Export CSV Handler
   const exportToCSV = () => {
     if (filteredVips.length === 0) return alert('No VIP data to export.');
-    const headers = ["Member Name", "Telegram Handle", "User ID", "Attributed Associate", "Subscription Tier ($)", "5% Commission ($)", "Source", "Date Enrolled"];
+    const headers = ["Member Name", "Telegram Handle", "User ID", "Attributed Associate", "Subscription Tier ($)", "Duration (Months)", "Expiration Date", "Status", "5% Commission ($)", "Date Enrolled"];
     const rows = filteredVips.map(m => [
       `"${m.first_name || 'Member'}"`,
       `"${m.telegram_handle || '-'}"`,
       `"${m.telegram_user_id || '-'}"`,
       `"${m.associate_name || 'Direct'}"`,
       m.paid_subscription_value || 0,
+      m.subscription_duration_months || 6,
+      `"${m.subscription_expiration_date ? new Date(m.subscription_expiration_date).toLocaleDateString() : '-'}"`,
+      m.subscription_status || 'ACTIVE',
       m.paid_commission || 0,
-      m.enrollment_source || 'AUTO_JOIN_REQUEST',
       `"${new Date(m.paid_group_joined_at || m.created_at).toLocaleDateString()}"`
     ]);
 
@@ -261,7 +284,7 @@ export default function VipMembersDeskView() {
               </span>
             </div>
             <p className="text-sm text-slate-400 mt-1">
-              Manage High Table VIP Subscribers, track 5% Associate Commissions, and enroll legacy members.
+              Manage High Table VIP Subscribers, track subscription durations & expiration dates, and enroll legacy members.
             </p>
           </div>
         </div>
@@ -298,13 +321,29 @@ export default function VipMembersDeskView() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold tracking-wider uppercase">Total VIP Members</span>
-            <Users className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-semibold tracking-wider uppercase">Active Subscribers</span>
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold text-slate-100">{stats.totalCount}</div>
-          <div className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> High Table Subscribers
+          <div className="text-2xl font-bold text-emerald-400">{stats.activeCount}</div>
+          <div className="text-xs text-slate-500 mt-1">High Table Active VIPs</div>
+        </div>
+
+        <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
+          <div className="flex items-center justify-between text-slate-400 mb-2">
+            <span className="text-xs font-semibold tracking-wider uppercase">Expiring Soon (≤ 7 Days)</span>
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
           </div>
+          <div className="text-2xl font-bold text-amber-400">{stats.expiringCount}</div>
+          <div className="text-xs text-slate-500 mt-1">Action / Renewal Warning</div>
+        </div>
+
+        <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
+          <div className="flex items-center justify-between text-slate-400 mb-2">
+            <span className="text-xs font-semibold tracking-wider uppercase">Expired VIP Members</span>
+            <Clock className="w-4 h-4 text-red-400" />
+          </div>
+          <div className="text-2xl font-bold text-red-400">{stats.expiredCount}</div>
+          <div className="text-xs text-slate-500 mt-1">Timeline Ended</div>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
@@ -312,32 +351,8 @@ export default function VipMembersDeskView() {
             <span className="text-xs font-semibold tracking-wider uppercase">Total VIP Revenue</span>
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold text-emerald-400">${stats.totalRevenue.toLocaleString()}</div>
-          <div className="text-xs text-slate-500 mt-1">Gross VIP Subscriptions</div>
-        </div>
-
-        <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold tracking-wider uppercase">Paid 5% Commission</span>
-            <Sparkles className="w-4 h-4 text-amber-400" />
-          </div>
-          <div className="text-2xl font-bold text-amber-400">${stats.totalCommission.toLocaleString()}</div>
-          <div className="text-xs text-slate-500 mt-1">Allocated to Associates</div>
-        </div>
-
-        <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold tracking-wider uppercase">Enrollment Sources</span>
-            <Zap className="w-4 h-4 text-cyan-400" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-cyan-400">{stats.autoCount}</span>
-            <span className="text-xs text-slate-400">Auto</span>
-            <span className="text-slate-600">/</span>
-            <span className="text-lg font-semibold text-purple-400">{stats.manualCount}</span>
-            <span className="text-xs text-slate-400">Manual</span>
-          </div>
-          <div className="text-xs text-slate-500 mt-1">Auto Request vs Owner Enrolled</div>
+          <div className="text-2xl font-bold text-slate-100">${stats.totalRevenue.toLocaleString()}</div>
+          <div className="text-xs text-slate-500 mt-1">5% Commission: ${stats.totalCommission.toLocaleString()}</div>
         </div>
       </div>
 
@@ -362,6 +377,18 @@ export default function VipMembersDeskView() {
 
         {/* Dropdown Filters */}
         <div className="flex flex-wrap items-center gap-3">
+          {/* Status Filter */}
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-medium px-3 py-2 rounded-xl focus:outline-none focus:border-amber-500/50"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="ACTIVE">🟢 Active</option>
+            <option value="EXPIRING_SOON">⚠️ Expiring Soon</option>
+            <option value="EXPIRED">🔴 Expired</option>
+          </select>
+
           {/* Associate Filter */}
           <select
             value={selectedAssociate}
@@ -387,17 +414,6 @@ export default function VipMembersDeskView() {
             <option value="700">$700 (Yearly)</option>
             <option value="CUSTOM">Custom Tier</option>
           </select>
-
-          {/* Source Filter */}
-          <select
-            value={selectedSource}
-            onChange={(e) => setSelectedSource(e.target.value)}
-            className="bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-medium px-3 py-2 rounded-xl focus:outline-none focus:border-amber-500/50"
-          >
-            <option value="ALL">All Enrollment Sources</option>
-            <option value="AUTO_JOIN_REQUEST">Auto Join Request</option>
-            <option value="OWNER_MANUAL_ENROLL">Owner Manual Enroll</option>
-          </select>
         </div>
       </div>
 
@@ -413,7 +429,7 @@ export default function VipMembersDeskView() {
             <Crown className="w-10 h-10 text-slate-600 mx-auto stroke-[1.5]" />
             <div className="text-base font-medium text-slate-300">No VIP Members Found</div>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              {searchTerm || selectedAssociate !== "ALL" || selectedPackage !== "ALL"
+              {searchTerm || selectedAssociate !== "ALL" || selectedPackage !== "ALL" || selectedStatus !== "ALL"
                 ? "Try adjusting your search terms or dropdown filters."
                 : "Enroll your first VIP member using the button above!"}
             </p>
@@ -425,10 +441,10 @@ export default function VipMembersDeskView() {
                 <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                   <th className="py-3.5 px-4">Member Info</th>
                   <th className="py-3.5 px-4">Referred Associate</th>
-                  <th className="py-3.5 px-4">Package Tier</th>
+                  <th className="py-3.5 px-4">Package & Duration</th>
+                  <th className="py-3.5 px-4">Joined & Expiration Date</th>
+                  <th className="py-3.5 px-4">Status</th>
                   <th className="py-3.5 px-4">5% Commission</th>
-                  <th className="py-3.5 px-4">Source</th>
-                  <th className="py-3.5 px-4">Date Enrolled</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -436,7 +452,11 @@ export default function VipMembersDeskView() {
                 {filteredVips.map((m) => {
                   const val = Number(m.paid_subscription_value || 0);
                   const comm = Number(m.paid_commission || (val * 0.05));
-                  const isPending = m.member_tier === 'PAID_VIP_PENDING' || m.status === 'PENDING_APPROVAL';
+                  const durMonths = m.subscription_duration_months || 6;
+                  const isPromo = durMonths === 8 || durMonths === 14;
+
+                  const status = m.subscription_status || 'ACTIVE';
+                  const expDate = m.subscription_expiration_date ? new Date(m.subscription_expiration_date) : null;
 
                   return (
                     <tr key={m.id} className="hover:bg-slate-800/30 transition-colors group">
@@ -449,11 +469,6 @@ export default function VipMembersDeskView() {
                           <div>
                             <div className="font-semibold text-slate-200 flex items-center gap-2">
                               <span>{m.first_name || 'VIP Member'}</span>
-                              {isPending && (
-                                <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
-                                  Pending Approval
-                                </span>
-                              )}
                             </div>
                             <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
                               {m.telegram_handle && <span className="text-amber-400/80">{m.telegram_handle}</span>}
@@ -471,15 +486,46 @@ export default function VipMembersDeskView() {
                         </div>
                       </td>
 
-                      {/* Package Tier */}
+                      {/* Package & Duration */}
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-emerald-400 flex items-center gap-1">
                           <DollarSign className="w-4 h-4 stroke-[2.5]" />
                           <span>{val}</span>
-                          <span className="text-xs font-normal text-slate-500">
-                            {val === 700 ? '(Yearly)' : val === 350 ? '(Half-Yearly)' : val === 250 ? '(Quarterly)' : '(Custom)'}
+                          <span className="text-xs font-normal text-slate-400 ml-1">
+                            ({durMonths} Months {isPromo ? '🎁 Promo' : ''})
                           </span>
                         </div>
+                      </td>
+
+                      {/* Dates */}
+                      <td className="py-3.5 px-4">
+                        <div className="text-xs space-y-0.5">
+                          <div className="text-slate-300 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-slate-500" />
+                            <span>Joined: {new Date(m.paid_group_joined_at || m.created_at).toLocaleDateString()}</span>
+                          </div>
+                          <div className="text-slate-400 font-medium flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-amber-400" />
+                            <span>Expires: {expDate ? expDate.toLocaleDateString() : 'N/A'}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Status */}
+                      <td className="py-3.5 px-4">
+                        {status === 'EXPIRING_SOON' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-semibold">
+                            <AlertTriangle className="w-3.5 h-3.5" /> Expiring Soon
+                          </span>
+                        ) : status === 'EXPIRED' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-semibold">
+                            <Clock className="w-3.5 h-3.5" /> Expired
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Active
+                          </span>
+                        )}
                       </td>
 
                       {/* 5% Commission */}
@@ -490,41 +536,20 @@ export default function VipMembersDeskView() {
                         </div>
                       </td>
 
-                      {/* Source */}
-                      <td className="py-3.5 px-4">
-                        {m.enrollment_source === 'OWNER_MANUAL_ENROLL' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs font-medium">
-                            <UserCheck className="w-3 h-3" /> Manual Owner
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-xs font-medium">
-                            <Zap className="w-3 h-3" /> Auto Request
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Date Enrolled */}
-                      <td className="py-3.5 px-4 text-xs text-slate-400">
-                        {new Date(m.paid_group_joined_at || m.created_at).toLocaleDateString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric'
-                        })}
-                      </td>
-
                       {/* Actions */}
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={() => {
-                              setEditingMember(m);
-                              setEditValue(m.paid_subscription_value || "700");
-                              setIsEditModalOpen(true);
+                              setRenewingMember(m);
+                              setRenewTierValue(m.paid_subscription_value || "350");
+                              setRenewDurationMonths(m.subscription_duration_months || "8");
+                              setIsRenewModalOpen(true);
                             }}
-                            className="p-1.5 hover:bg-amber-500/20 text-slate-400 hover:text-amber-400 rounded-lg transition-colors"
-                            title="Edit Tier Value"
+                            className="flex items-center gap-1 px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-lg text-xs font-medium transition-colors"
+                            title="Renew Subscription"
                           >
-                            <Edit3 className="w-4 h-4" />
+                            <RotateCw className="w-3.5 h-3.5" /> Renew
                           </button>
 
                           <button
@@ -619,20 +644,39 @@ export default function VipMembersDeskView() {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
-                  Paid Subscription Package Tier ($) *
-                </label>
-                <select
-                  value={subscriptionValue}
-                  onChange={(e) => setSubscriptionValue(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
-                >
-                  <option value="700">$700 (Yearly - $35 Comm)</option>
-                  <option value="350">$350 (Half-Yearly - $17.50 Comm)</option>
-                  <option value="250">$250 (Quarterly - $12.50 Comm)</option>
-                  <option value="500">$500 (Custom Tier - $25 Comm)</option>
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Subscription Tier ($)
+                  </label>
+                  <select
+                    value={subscriptionValue}
+                    onChange={(e) => setSubscriptionValue(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                  >
+                    <option value="350">$350 (Half-Yearly)</option>
+                    <option value="700">$700 (Yearly)</option>
+                    <option value="250">$250 (Quarterly)</option>
+                    <option value="500">$500 (Custom)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Duration (Months)
+                  </label>
+                  <select
+                    value={durationMonths}
+                    onChange={(e) => setDurationMonths(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none font-medium"
+                  >
+                    <option value="8">🎁 8 Months (Promo)</option>
+                    <option value="14">🎁 14 Months (Promo)</option>
+                    <option value="3">3 Months</option>
+                    <option value="6">6 Months</option>
+                    <option value="12">12 Months</option>
+                  </select>
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
@@ -655,47 +699,70 @@ export default function VipMembersDeskView() {
         </div>
       )}
 
-      {/* --- EDIT TIER VALUE MODAL --- */}
-      {isEditModalOpen && editingMember && (
+      {/* --- RENEW SUBSCRIPTION MODAL --- */}
+      {isRenewModalOpen && renewingMember && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl space-y-4 p-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl space-y-4 p-6">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-slate-100">Edit VIP Tier: {editingMember.first_name}</h3>
-              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-200">
+              <div className="flex items-center gap-2">
+                <RotateCw className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-slate-100">Renew VIP: {renewingMember.first_name}</h3>
+              </div>
+              <button onClick={() => setIsRenewModalOpen(false)} className="text-slate-400 hover:text-slate-200">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveEditTier} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
-                  Subscription Value ($)
-                </label>
-                <input
-                  type="number"
-                  required
-                  value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
-                />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  5% Associate Commission will be set to ${(Number(editValue) * 0.05).toFixed(2)}.
-                </p>
+            <form onSubmit={handleRenewSubscription} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Subscription Tier ($)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    value={renewTierValue}
+                    onChange={(e) => setRenewTierValue(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Renewal Duration (Months)
+                  </label>
+                  <select
+                    value={renewDurationMonths}
+                    onChange={(e) => setRenewDurationMonths(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none font-medium"
+                  >
+                    <option value="8">🎁 8 Months (Promo)</option>
+                    <option value="14">🎁 14 Months (Promo)</option>
+                    <option value="3">3 Months</option>
+                    <option value="6">6 Months</option>
+                    <option value="12">12 Months</option>
+                  </select>
+                </div>
               </div>
+
+              <p className="text-[11px] text-slate-500">
+                This will reset the member's status to 🟢 ACTIVE and calculate a new expiration date starting from today.
+              </p>
 
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsEditModalOpen(false)}
+                  onClick={() => setIsRenewModalOpen(false)}
                   className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-slate-200"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs rounded-xl shadow-md"
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-semibold text-xs rounded-xl shadow-md"
                 >
-                  Save Changes
+                  Confirm Renewal
                 </button>
               </div>
             </form>

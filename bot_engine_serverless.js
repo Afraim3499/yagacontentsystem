@@ -562,7 +562,15 @@ async function handleUpdate(update) {
         });
         return;
       }
-      else if (session.type === 'PLATFORM_CREDENTIALS') {
+      else if (session.type === 'VIP_ENROLL_CUSTOM_DUR') {
+        const inputNum = parseInt(text.trim());
+        if (isNaN(inputNum) || inputNum <= 0) {
+          await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Please send a valid number of months (e.g. 1, 3, 6, 12).` });
+          return;
+        }
+        await finalizeVipEnrollment(chatId, session.flowType, session.targetUserId, session.subVal, inputNum);
+        return;
+      }
         const profileHandleOrLink = text.trim().split('\n')[0].trim();
         const credId = `CRD-${Date.now().toString().substring(5)}`;
         await runQuery(
@@ -922,56 +930,32 @@ async function handleUpdate(update) {
     else if (data.startsWith('confirm_sub:')) {
       const parts = data.split(':');
       const targetUserId = parts[1];
-      const subAmount = Number(parts[2]) || 200.00;
+      const subAmount = Number(parts[2]) || 700.00;
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
 
-      let paidCommissionPct = 5.00;
-      const ruleRes = await runQuery(`SELECT paid_commission_pct FROM public.commission_rules WHERE id = 'RULE-DEFAULT' LIMIT 1`);
-      if (ruleRes.rows.length > 0) {
-        paidCommissionPct = Number(ruleRes.rows[0].paid_commission_pct || 5.00);
-      }
-      const paidComm = subAmount * (paidCommissionPct / 100);
-
-      const memRes = await runQuery(
-        `UPDATE public.community_members_log 
-         SET paid_subscription_value = $1, 
-             paid_commission = $2, 
-             member_tier = 'PAID_VIP',
-             status = 'ACTIVE' 
-         WHERE telegram_user_id = $3
-         RETURNING first_name, associate_id, associate_name`,
-        [subAmount, paidComm, targetUserId]
-      );
-
-      const mem = memRes.rows[0];
-      const memberName = mem?.first_name || 'VIP Member';
-      const associateId = mem?.associate_id;
-      const associateName = mem?.associate_name || 'Direct VIP';
-
-      await apiCall('answerCallbackQuery', { 
-        callback_query_id: cb.id, 
-        text: `✅ Confirmed $${subAmount} subscription! Commission $${paidComm.toFixed(2)} updated.`, 
-        show_alert: true 
-      });
+      const durationKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '3 Months', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:3` },
+            { text: '6 Months', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:6` }
+          ],
+          [
+            { text: '🎁 8 Months (Promo)', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:8` },
+            { text: '🎁 14 Months (Promo)', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:14` }
+          ],
+          [
+            { text: '12 Months', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:12` },
+            { text: '✍️ Custom Months', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:CUSTOM` }
+          ]
+        ]
+      };
 
       await apiCall('sendMessage', {
         chat_id: chatId,
-        text: `✅ *SUBSCRIPTION CONFIRMED BY OWNER*\n\nMember *${memberName}* subscription confirmed at \`$${subAmount.toFixed(2)}\`!\n📌 Attributed Associate: *${associateName}*\n💰 5% Commission Logged: \`+$${paidComm.toFixed(2)}\``,
-        parse_mode: 'Markdown'
+        text: `⏳ *SELECT SUBSCRIPTION DURATION FOR MEMBER ($${subAmount} TIER):*\n\nClick standard duration, promotional offer (8 or 14 months), or custom:`,
+        parse_mode: 'Markdown',
+        reply_markup: durationKeyboard
       });
-
-      if (associateId) {
-        const ascInfo = await runQuery(`SELECT telegram_chat_id, name FROM public.associates WHERE id = $1`, [associateId]);
-        const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
-        const ascName = ascInfo.rows[0]?.name || associateName;
-
-        if (ascChatId) {
-          await apiCall('sendMessage', {
-            chat_id: ascChatId,
-            text: `🎉 *CONFIRMED VIP COMMISSION BONUS!*\n\nHi *${ascName}*,\nMember *${memberName}* (invited by your link) was confirmed for a \`$${subAmount.toFixed(2)}\` VIP Subscription!\n\n💰 *Earned 5% Commission Bonus:* \`+$${paidComm.toFixed(2)}\``,
-            parse_mode: 'Markdown'
-          });
-        }
-      }
     }
     else if (data.startsWith('vip_asc:')) {
       const ascId = data.split(':')[1];
@@ -1023,41 +1007,133 @@ async function handleUpdate(update) {
         return;
       }
 
-      const memberName = session.memberName;
-      const ascId = session.ascId;
-      const ascName = session.ascName || 'Unattributed / Direct';
-      const commVal = Number((subVal * 0.05).toFixed(2));
+      session.subVal = subVal;
 
-      const userId = `USR-${Date.now().toString().substring(6)}`;
-      const logId = `MEM-${Date.now().toString().substring(5)}`;
-      const handle = memberName.startsWith('@') ? memberName : '';
-
-      await runQuery(
-        `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id)
-         VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $9, NOW(), 'High Table (Paid VIP)', '-1002607815374')`,
-        [logId, userId, handle, memberName, ascId, ascName, subVal, commVal, chatId.toString()]
-      );
-
-      delete activeSessions[chatId];
+      const durationKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '3 Months', callback_data: `vip_dur:MANUAL:0:${subVal}:3` },
+            { text: '6 Months', callback_data: `vip_dur:MANUAL:0:${subVal}:6` }
+          ],
+          [
+            { text: '🎁 8 Months (Promo)', callback_data: `vip_dur:MANUAL:0:${subVal}:8` },
+            { text: '🎁 14 Months (Promo)', callback_data: `vip_dur:MANUAL:0:${subVal}:14` }
+          ],
+          [
+            { text: '12 Months', callback_data: `vip_dur:MANUAL:0:${subVal}:12` },
+            { text: '✍️ Custom Months', callback_data: `vip_dur:MANUAL:0:${subVal}:CUSTOM` }
+          ]
+        ]
+      };
 
       await apiCall('sendMessage', {
         chat_id: chatId,
-        text: `✅ *VIP MEMBER ENROLLED SUCCESSFULLY!*\n\n👤 *Member:* **${memberName}**\n📌 *Attributed Associate:* **${ascName}**\n💎 *Subscription Package:* **$${subVal} Tier**\n🤝 *5% Associate Commission:* **$${commVal.toFixed(2)}**\n\n⚡️ *Synced live to database and CRM VIP Members Desk!*`,
+        text: `⏳ *SELECT SUBSCRIPTION DURATION FOR ${session.memberName} ($${subVal} TIER):*\n\nClick standard duration, promotional offer (8 or 14 months), or custom:`,
+        parse_mode: 'Markdown',
+        reply_markup: durationKeyboard
+      });
+    }
+    else if (data.startsWith('vip_dur:')) {
+      const parts = data.split(':'); // vip_dur:REQ/MANUAL:targetUserId:subVal:months
+      const flowType = parts[1];
+      const targetUserId = parts[2];
+      const subVal = Number(parts[3]) || 700;
+      const monthsArg = parts[4];
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+
+      if (monthsArg === 'CUSTOM') {
+        activeSessions[chatId] = {
+          type: 'VIP_ENROLL_CUSTOM_DUR',
+          flowType,
+          targetUserId,
+          subVal
+        };
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `✍️ *ENTER CUSTOM DURATION IN MONTHS*\n\nPlease reply with the exact number of months (e.g., \`1\`, \`2\`, \`5\`, \`18\`):`,
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
+
+      const months = Number(monthsArg) || 6;
+      await finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months);
+    }
+  }
+}
+
+async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months) {
+  const commVal = Number((subVal * 0.05).toFixed(2));
+  const now = new Date();
+  const expDate = new Date(now);
+  expDate.setMonth(expDate.getMonth() + Number(months));
+
+  const isPromo = months === 8 || months === 14;
+  const promoLabel = isPromo ? ' (Promo Offer)' : '';
+
+  const dateOpts = { month: 'short', day: 'numeric', year: 'numeric' };
+  const joinedStr = now.toLocaleDateString('en-US', dateOpts);
+  const expStr = expDate.toLocaleDateString('en-US', dateOpts);
+
+  let memberName = 'VIP Member';
+  let associateId = null;
+  let associateName = 'Unattributed / Direct';
+
+  if (flowType === 'REQ') {
+    const memRes = await runQuery(
+      `UPDATE public.community_members_log 
+       SET paid_subscription_value = $1, 
+           paid_commission = $2, 
+           member_tier = 'PAID_VIP',
+           status = 'ACTIVE',
+           subscription_duration_months = $3,
+           subscription_expiration_date = $4,
+           subscription_status = 'ACTIVE',
+           paid_group_joined_at = NOW()
+       WHERE telegram_user_id = $5
+       RETURNING first_name, associate_id, associate_name`,
+      [subVal, commVal, months, expDate.toISOString(), targetUserId]
+    );
+
+    const mem = memRes.rows[0];
+    memberName = mem?.first_name || 'VIP Member';
+    associateId = mem?.associate_id;
+    associateName = mem?.associate_name || 'Direct VIP';
+  } else {
+    const session = activeSessions[chatId];
+    memberName = session?.memberName || 'VIP Member';
+    associateId = session?.ascId || null;
+    associateName = session?.ascName || 'Unattributed / Direct';
+
+    const userId = targetUserId && targetUserId !== '0' ? targetUserId : `USR-${Date.now().toString().substring(6)}`;
+    const logId = `MEM-${Date.now().toString().substring(5)}`;
+    const handle = memberName.startsWith('@') ? memberName : '';
+
+    await runQuery(
+      `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id, subscription_duration_months, subscription_expiration_date, subscription_status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $9, NOW(), 'High Table (Paid VIP)', '-1002607815374', $10, $11, 'ACTIVE')`,
+      [logId, userId, handle, memberName, associateId, associateName, subVal, commVal, chatId.toString(), months, expDate.toISOString()]
+    );
+  }
+
+  delete activeSessions[chatId];
+
+  await apiCall('sendMessage', {
+    chat_id: chatId,
+    text: `✅ *VIP MEMBER ENROLLED SUCCESSFULLY!*\n\n👤 *Member:* **${memberName}**\n📌 *Attributed Associate:* **${associateName}**\n💎 *Subscription Package:* **$${subVal} Tier**\n⏳ *Duration:* **${months} Months${promoLabel}**\n📅 *Enrollment Date:* **${joinedStr}**\n⏰ *Expiration Date:* **${expStr}**\n🟢 *Status:* **ACTIVE**\n🤝 *5% Associate Commission:* **$${commVal.toFixed(2)}**\n\n⚡️ *Synced live to database and CRM VIP Members Desk!*`,
+    parse_mode: 'Markdown'
+  });
+
+  if (associateId) {
+    const ascInfo = await runQuery(`SELECT telegram_chat_id, name FROM public.associates WHERE id = $1`, [associateId]);
+    const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
+    const realAscName = ascInfo.rows[0]?.name || associateName;
+    if (ascChatId) {
+      await apiCall('sendMessage', {
+        chat_id: ascChatId,
+        text: `🎉 *CONFIRMED VIP COMMISSION BONUS!*\n\nHi *${realAscName}*,\nMember *${memberName}* (invited by your referral) was confirmed for a \`$${subVal.toFixed(2)}\` VIP Subscription (${months} Months)!\n\n💰 *Earned 5% Commission Bonus:* \`+$${commVal.toFixed(2)}\``,
         parse_mode: 'Markdown'
       });
-
-      if (ascId) {
-        const ascInfo = await runQuery(`SELECT telegram_chat_id, name FROM public.associates WHERE id = $1`, [ascId]);
-        const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
-        const realAscName = ascInfo.rows[0]?.name || ascName;
-        if (ascChatId) {
-          await apiCall('sendMessage', {
-            chat_id: ascChatId,
-            text: `🎉 *CONFIRMED VIP COMMISSION BONUS!*\n\nHi *${realAscName}*,\nMember *${memberName}* (invited by your referral) was enrolled for a \`$${subVal.toFixed(2)}\` VIP Subscription!\n\n💰 *Earned 5% Commission Bonus:* \`+$${commVal.toFixed(2)}\``,
-            parse_mode: 'Markdown'
-          });
-        }
-      }
     }
   }
 }
