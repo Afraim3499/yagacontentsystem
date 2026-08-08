@@ -23,7 +23,8 @@ import {
   RotateCw,
   Briefcase,
   Gift,
-  X
+  X,
+  Edit
 } from 'lucide-react';
 
 export default function VipMembersDeskView() {
@@ -52,6 +53,21 @@ export default function VipMembersDeskView() {
   const [renewingMember, setRenewingMember] = useState(null);
   const [renewTierValue, setRenewTierValue] = useState("350");
   const [renewDurationMonths, setRenewDurationMonths] = useState("8");
+
+  // Edit VIP Member Modal State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editHandle, setEditHandle] = useState("");
+  const [editUserId, setEditUserId] = useState("");
+  const [editAssociateId, setEditAssociateId] = useState("");
+  const [editSubVal, setEditSubVal] = useState("350");
+  const [editDurationMonths, setEditDurationMonths] = useState("8");
+  const [editJoinedDate, setEditJoinedDate] = useState("");
+  const [editExpirationDate, setEditExpirationDate] = useState("");
+  const [editStatus, setEditStatus] = useState("ACTIVE");
+  const [editAssociateComm, setEditAssociateComm] = useState("17.50");
+  const [editKabidulComm, setEditKabidulComm] = useState("87.50");
 
   useEffect(() => {
     fetchVipData();
@@ -149,6 +165,83 @@ export default function VipMembersDeskView() {
       expiredCount
     };
   }, [vipMembers]);
+
+  // Open Edit Modal with pre-filled fields
+  const handleOpenEditModal = (m) => {
+    setEditingMember(m);
+    setEditName(m.first_name || "");
+    setEditHandle(m.telegram_handle || "");
+    setEditUserId(m.telegram_user_id || "");
+    setEditAssociateId(m.associate_id || "");
+    const subVal = m.paid_subscription_value || 350;
+    setEditSubVal(subVal);
+    setEditDurationMonths(m.subscription_duration_months || 8);
+    
+    // Format dates to YYYY-MM-DD for date inputs
+    const joinedIso = m.paid_group_joined_at || m.created_at;
+    const joinedStr = joinedIso ? new Date(joinedIso).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+    setEditJoinedDate(joinedStr);
+
+    const expIso = m.subscription_expiration_date;
+    const expStr = expIso ? new Date(expIso).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+    setEditExpirationDate(expStr);
+
+    setEditStatus(m.subscription_status || "ACTIVE");
+    setEditAssociateComm(m.paid_commission || (subVal * 0.05).toFixed(2));
+    setEditKabidulComm(m.kabidul_commission || (subVal * 0.25).toFixed(2));
+
+    setIsEditModalOpen(true);
+  };
+
+  // Helper when Package Sub Value changes in Edit Modal
+  const handleEditSubValChange = (val) => {
+    setEditSubVal(val);
+    const num = Number(val) || 0;
+    setEditAssociateComm((num * 0.05).toFixed(2));
+    setEditKabidulComm((num * 0.25).toFixed(2));
+  };
+
+  // Save Edit Changes Handler
+  async function handleSaveMemberEdits(e) {
+    e.preventDefault();
+    if (!editingMember) return;
+
+    const subVal = Number(editSubVal) || 0;
+    const commVal = Number(editAssociateComm) || 0;
+    const kabCommVal = Number(editKabidulComm) || 0;
+    const months = Number(editDurationMonths) || 6;
+
+    const selectedAscObj = associates.find(a => a.id === editAssociateId);
+    const ascName = selectedAscObj ? selectedAscObj.name : 'Unattributed / Direct';
+
+    const joinedDateObj = editJoinedDate ? new Date(`${editJoinedDate}T12:00:00`) : new Date();
+    const expDateObj = editExpirationDate ? new Date(`${editExpirationDate}T12:00:00`) : new Date();
+
+    const { error } = await supabase.from('community_members_log').update({
+      first_name: editName.trim(),
+      telegram_handle: editHandle.startsWith('@') ? editHandle : (editHandle ? `@${editHandle}` : ''),
+      telegram_user_id: editUserId.trim(),
+      associate_id: editAssociateId || null,
+      associate_name: ascName,
+      paid_subscription_value: subVal,
+      paid_commission: commVal,
+      kabidul_commission: kabCommVal,
+      subscription_duration_months: months,
+      paid_group_joined_at: joinedDateObj.toISOString(),
+      subscription_expiration_date: expDateObj.toISOString(),
+      subscription_status: editStatus,
+      status: editStatus === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE'
+    }).eq('id', editingMember.id);
+
+    if (error) {
+      alert('Error updating member details: ' + error.message);
+    } else {
+      alert(`🎉 Successfully updated ${editName || 'Member'}! Details synced live to database & CRM.`);
+      setIsEditModalOpen(false);
+      setEditingMember(null);
+      fetchVipData();
+    }
+  }
 
   // Manual VIP Enroll Handler
   async function handleManualEnroll(e) {
@@ -294,7 +387,7 @@ export default function VipMembersDeskView() {
               </span>
             </div>
             <p className="text-sm text-slate-400 mt-1">
-              Manage High Table VIP Subscribers, track subscription durations & expiration dates, and calculate Kabidul's 25% commission.
+              Manage High Table VIP Subscribers, edit member details live, track subscription durations & expiration dates.
             </p>
           </div>
         </div>
@@ -558,6 +651,14 @@ export default function VipMembersDeskView() {
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
                           <button
+                            onClick={() => handleOpenEditModal(m)}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 rounded-lg text-xs font-medium transition-colors"
+                            title="Edit VIP Member Details"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit
+                          </button>
+
+                          <button
                             onClick={() => {
                               setRenewingMember(m);
                               setRenewTierValue(m.paid_subscription_value || "350");
@@ -587,6 +688,209 @@ export default function VipMembersDeskView() {
           </div>
         )}
       </div>
+
+      {/* --- LIVE EDIT VIP MEMBER MODAL --- */}
+      {isEditModalOpen && editingMember && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl space-y-4 p-6 my-8">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100">Edit VIP Member Details</h3>
+                  <p className="text-xs text-slate-500">Update member data live in Supabase DB</p>
+                </div>
+              </div>
+              <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-200">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMemberEdits} className="space-y-4">
+              {/* Member Name */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                  Member Display Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                />
+              </div>
+
+              {/* Handle & User ID */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Telegram Handle
+                  </label>
+                  <input
+                    type="text"
+                    value={editHandle}
+                    onChange={(e) => setEditHandle(e.target.value)}
+                    placeholder="@username"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Telegram User ID
+                  </label>
+                  <input
+                    type="text"
+                    value={editUserId}
+                    onChange={(e) => setEditUserId(e.target.value)}
+                    placeholder="e.g. 12345678"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Referred Associate */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                  Referred Associate
+                </label>
+                <select
+                  value={editAssociateId}
+                  onChange={(e) => setEditAssociateId(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                >
+                  <option value="">Unattributed / Direct VIP</option>
+                  {associates.map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Package Value ($) & Duration (Months) */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Package Tier ($)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    value={editSubVal}
+                    onChange={(e) => handleEditSubValChange(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-emerald-400 font-semibold text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Duration (Months)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    value={editDurationMonths}
+                    onChange={(e) => setEditDurationMonths(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Joined Date & Expiration Date Pickers */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Joined Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={editJoinedDate}
+                    onChange={(e) => setEditJoinedDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    Expiration Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={editExpirationDate}
+                    onChange={(e) => setEditExpirationDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-amber-400 font-medium text-sm px-3.5 py-2.5 rounded-xl focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Status Selector */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                  Subscription Status
+                </label>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 text-sm px-3.5 py-2.5 rounded-xl focus:outline-none font-medium"
+                >
+                  <option value="ACTIVE">🟢 Active</option>
+                  <option value="EXPIRING_SOON">⚠️ Expiring Soon (≤ 7 Days)</option>
+                  <option value="EXPIRED">🔴 Expired</option>
+                </select>
+              </div>
+
+              {/* Commissions Breakdown */}
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    5% Associate Comm ($)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editAssociateComm}
+                    onChange={(e) => setEditAssociateComm(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 text-emerald-400 font-medium text-xs px-3 py-1.5 rounded-lg focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                    25% Kabidul Comm ($)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editKabidulComm}
+                    onChange={(e) => setEditKabidulComm(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 text-amber-400 font-medium text-xs px-3 py-1.5 rounded-lg focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Form Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-slate-200 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* --- MANUAL VIP ENROLLMENT MODAL --- */}
       {isEnrollModalOpen && (
