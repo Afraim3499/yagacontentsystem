@@ -574,8 +574,8 @@ async function handleUpdate(update) {
       else if (session.type === 'VIP_ENROLL_CUSTOM_START_DATE') {
         const parts = text.split(',');
         const dateRaw = parts[0].trim();
-        const monthsRaw = parts[1] ? parseInt(parts[1].trim()) : 6;
-        const months = (!isNaN(monthsRaw) && monthsRaw > 0) ? monthsRaw : 6;
+        const monthsRaw = parts[1] ? parseInt(parts[1].trim()) : (session.months || 8);
+        const months = (!isNaN(monthsRaw) && monthsRaw > 0) ? monthsRaw : 8;
 
         let parsedDate = null;
         if (/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
@@ -583,6 +583,9 @@ async function handleUpdate(update) {
         } else if (/^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(dateRaw)) {
           const p = dateRaw.split(/[\/\-]/);
           parsedDate = new Date(`${p[2]}-${p[1]}-${p[0]}`);
+        } else if (/^\d{4}[\/\-]\d{2}[\/\-]\d{2}$/.test(dateRaw)) {
+          const p = dateRaw.split(/[\/\-]/);
+          parsedDate = new Date(`${p[0]}-${p[1]}-${p[2]}`);
         } else {
           parsedDate = new Date(dateRaw);
         }
@@ -590,7 +593,7 @@ async function handleUpdate(update) {
         if (!parsedDate || isNaN(parsedDate.getTime())) {
           await apiCall('sendMessage', {
             chat_id: chatId,
-            text: `⚠️ *INVALID DATE FORMAT*\n\nPlease reply in format \`YYYY-MM-DD, MONTHS\`\n_(e.g., \`2025-11-15, 8\` or \`2026-01-01, 14\` or \`15/11/2025, 6\`)_:`,
+            text: `⚠️ *INVALID DATE FORMAT*\n\nPlease reply with the date e.g. \`2026-08-01\` or \`2026-08-01, 8\` or select a quick date button above:`,
             parse_mode: 'Markdown'
           });
           return;
@@ -1101,16 +1104,60 @@ async function handleUpdate(update) {
           targetUserId,
           subVal
         };
+
+        const today = new Date();
+        const m1 = new Date(); m1.setMonth(m1.getMonth() - 1);
+        const m2 = new Date(); m2.setMonth(m2.getMonth() - 2);
+        const m3 = new Date(); m3.setMonth(m3.getMonth() - 3);
+        const m6 = new Date(); m6.setMonth(m6.getMonth() - 6);
+
+        const dateOpts = { month: 'short', day: 'numeric' };
+
+        const quickDateKeyboard = {
+          inline_keyboard: [
+            [
+              { text: `📍 Today (${today.toLocaleDateString('en-US', dateOpts)})`, callback_data: `vip_date:0` },
+              { text: `⏪ 1 Mo Ago (${m1.toLocaleDateString('en-US', dateOpts)})`, callback_data: `vip_date:1` }
+            ],
+            [
+              { text: `⏪ 2 Mos Ago (${m2.toLocaleDateString('en-US', dateOpts)})`, callback_data: `vip_date:2` },
+              { text: `⏪ 3 Mos Ago (${m3.toLocaleDateString('en-US', dateOpts)})`, callback_data: `vip_date:3` }
+            ],
+            [
+              { text: `⏪ 6 Mos Ago (${m6.toLocaleDateString('en-US', dateOpts)})`, callback_data: `vip_date:6` }
+            ]
+          ]
+        };
+
         await apiCall('sendMessage', {
           chat_id: chatId,
-          text: `📅 *ENTER CUSTOM ENROLLMENT START DATE & DURATION*\n\nPlease reply with the exact Start Date and Duration in format:\n\`YYYY-MM-DD, MONTHS\`\n\n*Examples:*\n• \`2025-11-15, 8\` _(Start Nov 15, 2025 for 8 Months Promo)_\n• \`2026-01-01, 14\` _(Start Jan 1, 2026 for 14 Months Promo)_\n• \`15/11/2025, 6\` _(Start Nov 15, 2025 for 6 Months)_`,
-          parse_mode: 'Markdown'
+          text: `📅 *SELECT OR TYPE CUSTOM ENROLLMENT START DATE*\n\nTap a quick start date button below, OR reply with your date e.g. \`2026-08-01\` or \`2026-08-01, 8\`:`,
+          parse_mode: 'Markdown',
+          reply_markup: quickDateKeyboard
         });
         return;
       }
 
       const months = Number(monthsArg) || 6;
       await finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months);
+    }
+    else if (data.startsWith('vip_date:')) {
+      const monthsBack = Number(data.split(':')[1]) || 0;
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+
+      const session = activeSessions[chatId];
+      if (!session) {
+        await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ VIP enrollment session expired. Please type /enroll_vip to try again.` });
+        return;
+      }
+
+      const customDate = new Date();
+      if (monthsBack > 0) {
+        customDate.setMonth(customDate.getMonth() - monthsBack);
+      }
+
+      const months = session.months || 8;
+      await finalizeVipEnrollment(chatId, session.flowType, session.targetUserId, session.subVal, months, customDate);
     }
   }
 }
