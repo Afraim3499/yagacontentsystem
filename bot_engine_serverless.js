@@ -563,8 +563,33 @@ async function handleUpdate(update) {
       return;
     }
 
-    const creatorKeyboard = {
-      keyboard: [
+async function registerBotCommands() {
+  try {
+    await apiCall('setMyCommands', {
+      commands: [
+        { command: 'enroll_vip', description: '👑 Enroll VIP Member (Owner Tool)' },
+        { command: 'start', description: '⚡️ Open Operations Main Menu & Buttons' },
+        { command: 'register', description: '✍️ Register as Team Creator' },
+        { command: 'tasks', description: '📋 View My Daily Assignments' },
+        { command: 'onboard', description: '🌐 Setup Target Platform Accounts' },
+        { command: 'issue', description: '⚠️ Report a Platform Problem' }
+      ]
+    });
+    console.log('✅ Telegram Bot Commands Menu Registered Successfully!');
+  } catch (e) {
+    console.error('Failed to register bot commands:', e);
+  }
+}
+registerBotCommands();
+
+    const isOwnerRes = await runQuery(`SELECT * FROM public.owners WHERE telegram_chat_id = $1 LIMIT 1`, [chatId]);
+    const isOwner = isOwnerRes.rows.length > 0;
+
+    const mainKeyboard = {
+      keyboard: isOwner ? [
+        [{ text: '👑 Enroll VIP Member' }, { text: '📋 My Daily Tasks' }],
+        [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
+      ] : [
         [{ text: '✍️ Register as Creator' }, { text: '📋 My Daily Tasks' }],
         [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
       ],
@@ -579,7 +604,7 @@ async function handleUpdate(update) {
           chat_id: chatId, 
           text: `⚡️ Welcome back, *${existing.public_name}*!\nYour account (\`${existing.id}\`) is active.\n\nUse the buttons below to check your daily tasks or setup target platforms:`, 
           parse_mode: 'Markdown',
-          reply_markup: creatorKeyboard
+          reply_markup: mainKeyboard
         });
         return;
       }
@@ -593,20 +618,30 @@ async function handleUpdate(update) {
     }
 
     if (text.startsWith('/start')) {
+      if (isOwner) {
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `👑 *WELCOME SYSTEM OWNER!*\n\nYou have full access to **Yaga Calls Operations Bot**.\n\nClick **[👑 Enroll VIP Member]** below or type \`/enroll_vip\` to quickly enroll any legacy VIP member into the CRM!`,
+          parse_mode: 'Markdown',
+          reply_markup: mainKeyboard
+        });
+        return;
+      }
+
       const existing = await getCreatorByChatId(chatId);
       if (existing) {
         await apiCall('sendMessage', { 
           chat_id: chatId, 
           text: `⚡️ Hello *${existing.public_name}*! Welcome to **Yaga Calls Operations**.\n\nSelect an action from the menu buttons below:`, 
           parse_mode: 'Markdown',
-          reply_markup: creatorKeyboard
+          reply_markup: mainKeyboard
         });
       } else {
         await apiCall('sendMessage', { 
           chat_id: chatId, 
           text: `⚡️ Welcome to **Yaga Calls Operations Bot**!\n\nTo join the team and receive daily content dispatches, click **[✍️ Register as Creator]** below.`, 
           parse_mode: 'Markdown',
-          reply_markup: creatorKeyboard
+          reply_markup: mainKeyboard
         });
       }
       return;
