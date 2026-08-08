@@ -100,12 +100,14 @@ async function broadcastToOwners(messageFn) {
     const res = await runQuery(`SELECT telegram_chat_id, name FROM public.owners WHERE telegram_chat_id IS NOT NULL AND active = true`);
     for (const owner of res.rows) {
       if (owner.telegram_chat_id) {
-        const text = typeof messageFn === 'function' ? messageFn(owner.name || 'Owner') : messageFn;
-        await apiCall('sendMessage', {
-          chat_id: owner.telegram_chat_id,
-          text: text,
-          parse_mode: 'Markdown'
-        });
+        const content = typeof messageFn === 'function' ? messageFn(owner.name || 'Owner') : messageFn;
+        let payload = {};
+        if (typeof content === 'object' && content !== null) {
+          payload = { chat_id: owner.telegram_chat_id, parse_mode: 'Markdown', ...content };
+        } else {
+          payload = { chat_id: owner.telegram_chat_id, text: String(content), parse_mode: 'Markdown' };
+        }
+        await apiCall('sendMessage', payload);
       }
     }
   } catch (err) {
@@ -889,6 +891,7 @@ async function replyToIssue(ticketId, creatorId, replyText) {
 
 module.exports = {
   handleUpdate,
+  broadcastToOwners,
   triggerStaggered3BatchDispatch,
   checkPendingStaggeredBatches,
   checkOverdueSLA,
