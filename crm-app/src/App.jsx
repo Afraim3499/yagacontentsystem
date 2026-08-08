@@ -13,6 +13,7 @@ import AnalyticsView from './components/views/AnalyticsView';
 import SettingsView from './components/views/SettingsView';
 import MemberTrackingDeskView from './components/views/MemberTrackingDeskView';
 import ReviewModerationDeskView from './components/views/ReviewModerationDeskView';
+import VipMembersDeskView from './components/views/VipMembersDeskView';
 import CrmLockScreen from './components/CrmLockScreen';
 
 function toCreator(row, voiceRow) {
@@ -372,9 +373,14 @@ export default function App() {
             <ContentStudioView 
               creators={creators}
               platforms={platforms}
-              dailyBatch={dailyBatch}
-              onSendToTeam={handleSendToTeam}
+              accounts={accounts}
+              conversions={conversions}
+              onDispatchBatchSuccess={fetchAllData}
             />
+          )}
+
+          {activeTab === 'vip' && (
+            <VipMembersDeskView />
           )}
 
           {activeTab === 'members' && (

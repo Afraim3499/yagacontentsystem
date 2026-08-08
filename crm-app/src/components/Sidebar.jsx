@@ -3,6 +3,7 @@ import {
   LayoutDashboard, 
   CalendarDays, 
   Users, 
+  Crown,
   Star,
   Layers, 
   MessageSquareCode, 
@@ -17,6 +18,7 @@ export default function Sidebar({ activeTab, setActiveTab, openIssuesCount, mobi
   const menuItems = [
     { id: 'dashboard', label: 'Command Center', icon: LayoutDashboard },
     { id: 'studio', label: 'Content Studio', icon: CalendarDays, badge: '3-Batch' },
+    { id: 'vip', label: 'VIP Members Desk', icon: Crown, badge: 'VIP' },
     { id: 'members', label: 'Member Intelligence', icon: Users, badge: 'Live' },
     { id: 'reviews', label: 'Review Moderation', icon: Star, badge: 'New' },
     { id: 'creators', label: 'Creators & Accounts', icon: Users },

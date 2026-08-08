@@ -511,6 +511,58 @@ async function handleUpdate(update) {
       return;
     }
 
+    // --- 👑 OWNER VIP MEMBER MANUAL ENROLLMENT WORKFLOW ---
+    if (text.includes('Enroll VIP') || text.startsWith('/enroll_vip') || text.startsWith('/vip')) {
+      const ownerRes = await runQuery(`SELECT * FROM public.owners WHERE telegram_chat_id = $1 LIMIT 1`, [chatId]);
+      if (ownerRes.rows.length === 0) {
+        // Auto register as owner if not present
+        await runQuery(
+          `INSERT INTO public.owners (id, name, telegram_chat_id, role, active) VALUES ($1, $2, $3, 'SYSTEM_OWNER', true) ON CONFLICT (telegram_chat_id) DO NOTHING`,
+          [`OWN-${Date.now().toString().substring(5)}`, msg.from.first_name || 'System Owner', chatId]
+        );
+      }
+
+      activeSessions[chatId] = { type: 'VIP_ENROLL_MEMBER_NAME' };
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `👑 *OWNER VIP MEMBER ENROLLMENT*\n\nPlease reply with the Member's **Telegram Username**, **Name**, or **User ID**:\n_(e.g., \`@alexvance\` or \`Alex Vance\` or \`12345678\`)_`,
+        parse_mode: 'Markdown'
+      });
+      return;
+    }
+
+    // --- STEP 1 RESPONSE: OWNER REPLIED WITH MEMBER NAME ---
+    if (session && session.type === 'VIP_ENROLL_MEMBER_NAME') {
+      const memberInput = text.trim();
+      const ascRes = await runQuery(`SELECT * FROM public.associates ORDER BY name ASC`);
+      const associatesList = ascRes.rows;
+
+      // Build Associate Selector Keyboard
+      const inlineKeyboard = [];
+      for (let i = 0; i < associatesList.length; i += 2) {
+        const row = [];
+        row.push({ text: `👤 ${associatesList[i].name}`, callback_data: `vip_asc:${associatesList[i].id}` });
+        if (associatesList[i + 1]) {
+          row.push({ text: `👤 ${associatesList[i + 1].name}`, callback_data: `vip_asc:${associatesList[i + 1].id}` });
+        }
+        inlineKeyboard.push(row);
+      }
+      inlineKeyboard.push([{ text: `🌐 Direct / Unattributed VIP`, callback_data: `vip_asc:DIRECT` }]);
+
+      activeSessions[chatId] = {
+        type: 'VIP_ENROLL_SELECT_ASC',
+        memberName: memberInput
+      };
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `📌 *SELECT REFERRED ASSOCIATE FOR ${memberInput}:*\n\nClick the Associate whose invite link brought this member to the Free Group:`,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: inlineKeyboard }
+      });
+      return;
+    }
+
     const creatorKeyboard = {
       keyboard: [
         [{ text: '✍️ Register as Creator' }, { text: '📋 My Daily Tasks' }],
@@ -872,6 +924,92 @@ async function handleUpdate(update) {
           await apiCall('sendMessage', {
             chat_id: ascChatId,
             text: `🎉 *CONFIRMED VIP COMMISSION BONUS!*\n\nHi *${ascName}*,\nMember *${memberName}* (invited by your link) was confirmed for a \`$${subAmount.toFixed(2)}\` VIP Subscription!\n\n💰 *Earned 5% Commission Bonus:* \`+$${paidComm.toFixed(2)}\``,
+            parse_mode: 'Markdown'
+          });
+        }
+      }
+    }
+    else if (data.startsWith('vip_asc:')) {
+      const ascId = data.split(':')[1];
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+
+      const session = activeSessions[chatId];
+      const memberName = session?.memberName || 'VIP Member';
+
+      let ascName = 'Unattributed / Direct';
+      if (ascId !== 'DIRECT') {
+        const ascRes = await runQuery(`SELECT name FROM public.associates WHERE id = $1 LIMIT 1`, [ascId]);
+        if (ascRes.rows.length > 0) ascName = ascRes.rows[0].name;
+      }
+
+      activeSessions[chatId] = {
+        type: 'VIP_ENROLL_SELECT_TIER',
+        memberName: memberName,
+        ascId: ascId === 'DIRECT' ? null : ascId,
+        ascName: ascName
+      };
+
+      const packageKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '💵 $250 (Quarterly)', callback_data: 'vip_tier:250' },
+            { text: '⭐️ $350 (Half-Yearly)', callback_data: 'vip_tier:350' }
+          ],
+          [
+            { text: '🎁 $700 (Yearly)', callback_data: 'vip_tier:700' },
+            { text: '⚡️ Custom $500', callback_data: 'vip_tier:500' }
+          ]
+        ]
+      };
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `💎 *SELECT SUBSCRIPTION PACKAGE TIER FOR ${memberName}:*\n\n📌 *Attributed Associate:* **${ascName}**\n\nClick the package tier paid by this member:`,
+        parse_mode: 'Markdown',
+        reply_markup: packageKeyboard
+      });
+    }
+    else if (data.startsWith('vip_tier:')) {
+      const subVal = Number(data.split(':')[1]) || 700;
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+
+      const session = activeSessions[chatId];
+      if (!session || !session.memberName) {
+        await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ VIP enrollment session expired. Please type /enroll_vip to try again.` });
+        return;
+      }
+
+      const memberName = session.memberName;
+      const ascId = session.ascId;
+      const ascName = session.ascName || 'Unattributed / Direct';
+      const commVal = Number((subVal * 0.05).toFixed(2));
+
+      const userId = `USR-${Date.now().toString().substring(6)}`;
+      const logId = `MEM-${Date.now().toString().substring(5)}`;
+      const handle = memberName.startsWith('@') ? memberName : '';
+
+      await runQuery(
+        `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id)
+         VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $9, NOW(), 'High Table (Paid VIP)', '-1002607815374')`,
+        [logId, userId, handle, memberName, ascId, ascName, subVal, commVal, chatId.toString()]
+      );
+
+      delete activeSessions[chatId];
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `✅ *VIP MEMBER ENROLLED SUCCESSFULLY!*\n\n👤 *Member:* **${memberName}**\n📌 *Attributed Associate:* **${ascName}**\n💎 *Subscription Package:* **$${subVal} Tier**\n🤝 *5% Associate Commission:* **$${commVal.toFixed(2)}**\n\n⚡️ *Synced live to database and CRM VIP Members Desk!*`,
+        parse_mode: 'Markdown'
+      });
+
+      if (ascId) {
+        const ascInfo = await runQuery(`SELECT telegram_chat_id, name FROM public.associates WHERE id = $1`, [ascId]);
+        const ascChatId = ascInfo.rows[0]?.telegram_chat_id;
+        const realAscName = ascInfo.rows[0]?.name || ascName;
+        if (ascChatId) {
+          await apiCall('sendMessage', {
+            chat_id: ascChatId,
+            text: `🎉 *CONFIRMED VIP COMMISSION BONUS!*\n\nHi *${realAscName}*,\nMember *${memberName}* (invited by your referral) was enrolled for a \`$${subVal.toFixed(2)}\` VIP Subscription!\n\n💰 *Earned 5% Commission Bonus:* \`+$${commVal.toFixed(2)}\``,
             parse_mode: 'Markdown'
           });
         }
