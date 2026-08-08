@@ -128,13 +128,14 @@ async function resolveAssociateFromLink(rawLinkObj) {
 
   if (rawUrl) {
     const cleanUrl = rawUrl.trim();
-    // Extract hash e.g. "JFf8kBf01mg3OTg1" from any URL structure
-    const hashMatches = cleanUrl.match(/[\+\/]?([a-zA-Z0-9_-]{10,})/);
-    const linkHash = hashMatches ? hashMatches[1] : cleanUrl.replace(/[^a-zA-Z0-9_-]/g, '');
+    // Clean out protocol headers and trailing '...' from Telegram
+    const hashClean = cleanUrl.replace('https://t.me/+', '').replace('https://t.me/joinchat/', '').replace('https://t.me/', '').replace('...', '').trim();
+    const hashMatches = hashClean.match(/([a-zA-Z0-9_-]{5,})/);
+    const linkHash = hashMatches ? hashMatches[1] : hashClean;
 
     // 1. Direct SQL Hash / URL Match
     let ascRes = await runQuery(
-      `SELECT * FROM public.associates WHERE unique_invite_link = $1 OR unique_invite_link ILIKE $2 LIMIT 1`,
+      `SELECT * FROM public.associates WHERE unique_invite_link ILIKE $1 OR unique_invite_link ILIKE $2 LIMIT 1`,
       [cleanUrl, `%${linkHash}%`]
     );
 
@@ -146,18 +147,19 @@ async function resolveAssociateFromLink(rawLinkObj) {
       );
     }
 
-    // 3. Fallback: In-Memory regex scan across all associates
+    // 3. Fallback: In-Memory prefix scan across all associates
     if (ascRes.rows.length === 0) {
       const allAsc = await runQuery(`SELECT * FROM public.associates`);
       for (const asc of allAsc.rows) {
         if (!asc.unique_invite_link) continue;
-        const ascHashMatches = asc.unique_invite_link.match(/[\+\/]?([a-zA-Z0-9_-]{10,})/);
-        const ascHash = ascHashMatches ? ascHashMatches[1] : '';
-        if (ascHash && linkHash && (ascHash.includes(linkHash) || linkHash.includes(ascHash))) {
+        const ascHashClean = asc.unique_invite_link.replace('https://t.me/+', '').replace('https://t.me/joinchat/', '').replace('https://t.me/', '').replace('...', '').trim();
+        const ascHashMatches = ascHashClean.match(/([a-zA-Z0-9_-]{5,})/);
+        const ascHash = ascHashMatches ? ascHashMatches[1] : ascHashClean;
+        if (ascHash && linkHash && (ascHash.startsWith(linkHash) || linkHash.startsWith(ascHash) || ascHash.includes(linkHash) || linkHash.includes(ascHash))) {
           associateId = asc.id;
           associateName = asc.name;
           if (Number(asc.free_commission_rate) > 0) freeComm = Number(asc.free_commission_rate);
-          console.log(`🎯 BULLETPROOF IN-MEMORY LINK MATCH: ${rawUrl} matched to ${asc.name} (${asc.id})`);
+          console.log(`🎯 BULLETPROOF IN-MEMORY PREFIX MATCH: ${rawUrl} matched to ${asc.name} (${asc.id})`);
           return { associateId, associateName, freeComm };
         }
       }
