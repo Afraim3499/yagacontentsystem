@@ -21,6 +21,7 @@ import {
   Clock,
   AlertTriangle,
   RotateCw,
+  Briefcase,
   Gift,
   X
 } from 'lucide-react';
@@ -119,6 +120,7 @@ export default function VipMembersDeskView() {
   const stats = useMemo(() => {
     let totalRevenue = 0;
     let totalCommission = 0;
+    let totalKabidulCommission = 0;
     let activeCount = 0;
     let expiringCount = 0;
     let expiredCount = 0;
@@ -126,8 +128,10 @@ export default function VipMembersDeskView() {
     vipMembers.forEach(m => {
       const val = Number(m.paid_subscription_value || 0);
       const comm = Number(m.paid_commission || (val * 0.05));
+      const kabComm = Number(m.kabidul_commission || (val * 0.25));
       totalRevenue += val;
       totalCommission += comm;
+      totalKabidulCommission += kabComm;
 
       const st = m.subscription_status || 'ACTIVE';
       if (st === 'EXPIRING_SOON') expiringCount++;
@@ -139,6 +143,7 @@ export default function VipMembersDeskView() {
       totalCount: vipMembers.length,
       totalRevenue,
       totalCommission,
+      totalKabidulCommission,
       activeCount,
       expiringCount,
       expiredCount
@@ -152,6 +157,7 @@ export default function VipMembersDeskView() {
 
     const subVal = Number(subscriptionValue) || 350;
     const commVal = Number((subVal * 0.05).toFixed(2));
+    const kabidulCommVal = Number((subVal * 0.25).toFixed(2));
     const months = Number(durationMonths) || 6;
 
     const selectedAscObj = associates.find(a => a.id === targetAssociateId);
@@ -174,6 +180,7 @@ export default function VipMembersDeskView() {
       member_tier: 'PAID_VIP',
       paid_subscription_value: subVal,
       paid_commission: commVal,
+      kabidul_commission: kabidulCommVal,
       status: 'ACTIVE',
       enrollment_source: 'OWNER_MANUAL_ENROLL',
       paid_group_joined_at: now.toISOString(),
@@ -187,7 +194,7 @@ export default function VipMembersDeskView() {
     if (error) {
       alert('Error enrolling VIP member: ' + error.message);
     } else {
-      alert(`🎉 Successfully Enrolled VIP Member: ${memberName} ($${subVal} Tier - ${months} Months)!`);
+      alert(`🎉 Successfully Enrolled VIP Member: ${memberName} ($${subVal} Tier - ${months} Months)!\n💼 Kabidul's 25% Commission: $${kabidulCommVal}`);
       setIsEnrollModalOpen(false);
       setMemberName("");
       setTelegramHandle("");
@@ -204,6 +211,7 @@ export default function VipMembersDeskView() {
 
     const subVal = Number(renewTierValue) || 350;
     const commVal = Number((subVal * 0.05).toFixed(2));
+    const kabidulCommVal = Number((subVal * 0.25).toFixed(2));
     const months = Number(renewDurationMonths) || 6;
 
     const now = new Date();
@@ -213,6 +221,7 @@ export default function VipMembersDeskView() {
     const { error } = await supabase.from('community_members_log').update({
       paid_subscription_value: subVal,
       paid_commission: commVal,
+      kabidul_commission: kabidulCommVal,
       subscription_duration_months: months,
       subscription_expiration_date: newExpDate.toISOString(),
       subscription_status: 'ACTIVE',
@@ -222,7 +231,7 @@ export default function VipMembersDeskView() {
     if (error) {
       alert('Error renewing subscription: ' + error.message);
     } else {
-      alert(`🎉 Renewed ${renewingMember.first_name}'s VIP Subscription for ${months} Months (Expires: ${newExpDate.toLocaleDateString()})!`);
+      alert(`🎉 Renewed ${renewingMember.first_name}'s VIP Subscription for ${months} Months!\n💼 Kabidul's 25% Commission: $${kabidulCommVal}`);
       setIsRenewModalOpen(false);
       setRenewingMember(null);
       fetchVipData();
@@ -244,7 +253,7 @@ export default function VipMembersDeskView() {
   // Export CSV Handler
   const exportToCSV = () => {
     if (filteredVips.length === 0) return alert('No VIP data to export.');
-    const headers = ["Member Name", "Telegram Handle", "User ID", "Attributed Associate", "Subscription Tier ($)", "Duration (Months)", "Expiration Date", "Status", "5% Commission ($)", "Date Enrolled"];
+    const headers = ["Member Name", "Telegram Handle", "User ID", "Attributed Associate", "Subscription Tier ($)", "Duration (Months)", "Expiration Date", "Status", "5% Associate Commission ($)", "25% Kabidul Commission ($)", "Date Enrolled"];
     const rows = filteredVips.map(m => [
       `"${m.first_name || 'Member'}"`,
       `"${m.telegram_handle || '-'}"`,
@@ -255,6 +264,7 @@ export default function VipMembersDeskView() {
       `"${m.subscription_expiration_date ? new Date(m.subscription_expiration_date).toLocaleDateString() : '-'}"`,
       m.subscription_status || 'ACTIVE',
       m.paid_commission || 0,
+      m.kabidul_commission || ((m.paid_subscription_value || 0) * 0.25),
       `"${new Date(m.paid_group_joined_at || m.created_at).toLocaleDateString()}"`
     ]);
 
@@ -284,7 +294,7 @@ export default function VipMembersDeskView() {
               </span>
             </div>
             <p className="text-sm text-slate-400 mt-1">
-              Manage High Table VIP Subscribers, track subscription durations & expiration dates, and enroll legacy members.
+              Manage High Table VIP Subscribers, track subscription durations & expiration dates, and calculate Kabidul's 25% commission.
             </p>
           </div>
         </div>
@@ -330,20 +340,24 @@ export default function VipMembersDeskView() {
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold tracking-wider uppercase">Expiring Soon (≤ 7 Days)</span>
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-semibold tracking-wider uppercase">Kabidul's Commission (25%)</span>
+            <Briefcase className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-2xl font-bold text-amber-400">{stats.expiringCount}</div>
-          <div className="text-xs text-slate-500 mt-1">Action / Renewal Warning</div>
+          <div className="text-2xl font-bold text-amber-400">${stats.totalKabidulCommission.toLocaleString()}</div>
+          <div className="text-xs text-slate-500 mt-1">25% Calculated Management Cut</div>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold tracking-wider uppercase">Expired VIP Members</span>
-            <Clock className="w-4 h-4 text-red-400" />
+            <span className="text-xs font-semibold tracking-wider uppercase">Expiring / Expired</span>
+            <AlertTriangle className="w-4 h-4 text-red-400" />
           </div>
-          <div className="text-2xl font-bold text-red-400">{stats.expiredCount}</div>
-          <div className="text-xs text-slate-500 mt-1">Timeline Ended</div>
+          <div className="text-2xl font-bold text-slate-200">
+            <span className="text-amber-400">{stats.expiringCount}</span>
+            <span className="text-slate-600 mx-1">/</span>
+            <span className="text-red-400">{stats.expiredCount}</span>
+          </div>
+          <div className="text-xs text-slate-500 mt-1">Expiring Soon / Expired Members</div>
         </div>
 
         <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-lg backdrop-blur-md">
@@ -352,7 +366,7 @@ export default function VipMembersDeskView() {
             <DollarSign className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-2xl font-bold text-slate-100">${stats.totalRevenue.toLocaleString()}</div>
-          <div className="text-xs text-slate-500 mt-1">5% Commission: ${stats.totalCommission.toLocaleString()}</div>
+          <div className="text-xs text-slate-500 mt-1">5% Associate: ${stats.totalCommission.toLocaleString()}</div>
         </div>
       </div>
 
@@ -377,7 +391,6 @@ export default function VipMembersDeskView() {
 
         {/* Dropdown Filters */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Status Filter */}
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
@@ -389,7 +402,6 @@ export default function VipMembersDeskView() {
             <option value="EXPIRED">🔴 Expired</option>
           </select>
 
-          {/* Associate Filter */}
           <select
             value={selectedAssociate}
             onChange={(e) => setSelectedAssociate(e.target.value)}
@@ -402,7 +414,6 @@ export default function VipMembersDeskView() {
             <option value="DIRECT">Unattributed / Direct</option>
           </select>
 
-          {/* Package Filter */}
           <select
             value={selectedPackage}
             onChange={(e) => setSelectedPackage(e.target.value)}
@@ -444,7 +455,7 @@ export default function VipMembersDeskView() {
                   <th className="py-3.5 px-4">Package & Duration</th>
                   <th className="py-3.5 px-4">Joined & Expiration Date</th>
                   <th className="py-3.5 px-4">Status</th>
-                  <th className="py-3.5 px-4">5% Commission</th>
+                  <th className="py-3.5 px-4">Commissions (5% / 25%)</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -452,6 +463,7 @@ export default function VipMembersDeskView() {
                 {filteredVips.map((m) => {
                   const val = Number(m.paid_subscription_value || 0);
                   const comm = Number(m.paid_commission || (val * 0.05));
+                  const kabComm = Number(m.kabidul_commission || (val * 0.25));
                   const durMonths = m.subscription_duration_months || 6;
                   const isPromo = durMonths === 8 || durMonths === 14;
 
@@ -528,11 +540,17 @@ export default function VipMembersDeskView() {
                         )}
                       </td>
 
-                      {/* 5% Commission */}
+                      {/* Commissions */}
                       <td className="py-3.5 px-4">
-                        <div className="font-medium text-amber-400 text-xs flex items-center gap-1">
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <span>${comm.toFixed(2)}</span>
+                        <div className="text-xs space-y-0.5">
+                          <div className="font-medium text-emerald-400 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" />
+                            <span>5% Associate: ${comm.toFixed(2)}</span>
+                          </div>
+                          <div className="font-semibold text-amber-400 flex items-center gap-1">
+                            <Briefcase className="w-3 h-3" />
+                            <span>25% Kabidul: ${kabComm.toFixed(2)}</span>
+                          </div>
                         </div>
                       </td>
 
@@ -747,7 +765,7 @@ export default function VipMembersDeskView() {
               </div>
 
               <p className="text-[11px] text-slate-500">
-                This will reset the member's status to 🟢 ACTIVE and calculate a new expiration date starting from today.
+                This will reset the member's status to 🟢 ACTIVE, calculate Kabidul's 25% commission ($${(Number(renewTierValue) * 0.25).toFixed(2)}), and calculate a new expiration date starting from today.
               </p>
 
               <div className="flex items-center justify-end gap-3 pt-2">

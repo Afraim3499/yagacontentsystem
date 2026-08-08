@@ -1113,6 +1113,7 @@ async function handleUpdate(update) {
 
 async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months, customStartDate = null) {
   const commVal = Number((subVal * 0.05).toFixed(2));
+  const kabidulCommVal = Number((subVal * 0.25).toFixed(2));
   const now = customStartDate ? new Date(customStartDate) : new Date();
   const expDate = new Date(now);
   expDate.setMonth(expDate.getMonth() + Number(months));
@@ -1139,15 +1140,16 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
       `UPDATE public.community_members_log 
        SET paid_subscription_value = $1, 
            paid_commission = $2, 
+           kabidul_commission = $3,
            member_tier = 'PAID_VIP',
            status = 'ACTIVE',
-           subscription_duration_months = $3,
-           subscription_expiration_date = $4,
-           subscription_status = $5,
-           paid_group_joined_at = $6
-       WHERE telegram_user_id = $7
+           subscription_duration_months = $4,
+           subscription_expiration_date = $5,
+           subscription_status = $6,
+           paid_group_joined_at = $7
+       WHERE telegram_user_id = $8
        RETURNING first_name, associate_id, associate_name`,
-      [subVal, commVal, months, expDate.toISOString(), subStatus, now.toISOString(), targetUserId]
+      [subVal, commVal, kabidulCommVal, months, expDate.toISOString(), subStatus, now.toISOString(), targetUserId]
     );
 
     const mem = memRes.rows[0];
@@ -1165,9 +1167,9 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
     const handle = memberName.startsWith('@') ? memberName : '';
 
     await runQuery(
-      `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id, subscription_duration_months, subscription_expiration_date, subscription_status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $9, $10, 'High Table (Paid VIP)', '-1002607815374', $11, $12, $13)`,
-      [logId, userId, handle, memberName, associateId, associateName, subVal, commVal, chatId.toString(), now.toISOString(), months, expDate.toISOString(), subStatus]
+      `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, kabidul_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id, subscription_duration_months, subscription_expiration_date, subscription_status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, $9, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $10, $11, 'High Table (Paid VIP)', '-1002607815374', $12, $13, $14)`,
+      [logId, userId, handle, memberName, associateId, associateName, subVal, commVal, kabidulCommVal, chatId.toString(), now.toISOString(), months, expDate.toISOString(), subStatus]
     );
   }
 
@@ -1175,7 +1177,7 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
 
   await apiCall('sendMessage', {
     chat_id: chatId,
-    text: `✅ *VIP MEMBER ENROLLED SUCCESSFULLY!*\n\n👤 *Member:* **${memberName}**\n📌 *Attributed Associate:* **${associateName}**\n💎 *Subscription Package:* **$${subVal} Tier**\n⏳ *Duration:* **${months} Months${promoLabel}**\n📅 *Enrollment Date:* **${joinedStr}**\n⏰ *Expiration Date:* **${expStr}**\n${statusBadge} *Status:* **${subStatus}**\n🤝 *5% Associate Commission:* **$${commVal.toFixed(2)}**\n\n⚡️ *Synced live to database and CRM VIP Members Desk!*`,
+    text: `✅ *VIP MEMBER ENROLLED SUCCESSFULLY!*\n\n👤 *Member:* **${memberName}**\n📌 *Attributed Associate:* **${associateName}**\n💎 *Subscription Package:* **$${subVal} Tier**\n⏳ *Duration:* **${months} Months${promoLabel}**\n📅 *Enrollment Date:* **${joinedStr}**\n⏰ *Expiration Date:* **${expStr}**\n${statusBadge} *Status:* **${subStatus}**\n🤝 *5% Associate Commission:* **$${commVal.toFixed(2)}**\n💼 *Kabidul's 25% Commission:* **$${kabidulCommVal.toFixed(2)}**\n\n⚡️ *Synced live to database and CRM VIP Members Desk!*`,
     parse_mode: 'Markdown'
   });
 
