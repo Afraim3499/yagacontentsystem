@@ -578,16 +578,17 @@ async function handleUpdate(update) {
         const months = (!isNaN(monthsRaw) && monthsRaw > 0) ? monthsRaw : 8;
 
         let parsedDate = null;
-        if (/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
-          parsedDate = new Date(dateRaw);
+        if (/^\d{4}[\/\-]\d{2}[\/\-]\d{2}$/.test(dateRaw)) {
+          const p = dateRaw.split(/[\/\-]/);
+          parsedDate = new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]), 12, 0, 0);
         } else if (/^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(dateRaw)) {
           const p = dateRaw.split(/[\/\-]/);
-          parsedDate = new Date(`${p[2]}-${p[1]}-${p[0]}`);
-        } else if (/^\d{4}[\/\-]\d{2}[\/\-]\d{2}$/.test(dateRaw)) {
-          const p = dateRaw.split(/[\/\-]/);
-          parsedDate = new Date(`${p[0]}-${p[1]}-${p[2]}`);
+          parsedDate = new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]), 12, 0, 0);
         } else {
           parsedDate = new Date(dateRaw);
+          if (!isNaN(parsedDate.getTime())) {
+            parsedDate.setHours(12, 0, 0, 0);
+          }
         }
 
         if (!parsedDate || isNaN(parsedDate.getTime())) {
