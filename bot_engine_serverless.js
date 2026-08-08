@@ -593,25 +593,85 @@ async function handleUpdate(update) {
     const groupTitle = req.chat?.title || 'Telegram Group';
     const groupId = req.chat?.id?.toString() || '';
 
-    console.log(`📩 CHAT_JOIN_REQUEST EVENT FOR ${user.first_name} (${user.id}) via ${inviteLink}`);
+    console.log(`📩 CHAT_JOIN_REQUEST EVENT FOR ${user.first_name} (${user.id}) in ${groupTitle} (${groupId})`);
 
-    await apiCall('approveChatJoinRequest', {
-      chat_id: groupId,
-      user_id: user.id
-    });
+    const isHighTable = (groupId === '-1002607815374') || 
+                        groupTitle.toLowerCase().includes('high table') || 
+                        groupTitle.toLowerCase().includes('vip');
 
-    const { associateId, associateName, freeComm } = await resolveAssociateFromLink(req.invite_link || inviteLink);
+    if (isHighTable) {
+      // 💎 HIGH TABLE (PAID VIP GROUP) WORKFLOW: DO NOT AUTO-APPROVE! Owner accepts manually.
+      console.log(`👑 HIGH TABLE JOIN REQUEST RECEIVED FOR ${user.first_name} (${user.id}) - Awaiting Owner manual approval...`);
 
-    const logId = `MEM-${Date.now().toString().substring(5)}`;
-    await runQuery(
-      `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status, free_commission)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'FREE_ONLY', 'ACTIVE', $10)
-       ON CONFLICT (telegram_user_id) DO UPDATE SET associate_id = EXCLUDED.associate_id, associate_name = EXCLUDED.associate_name, used_invite_link = EXCLUDED.used_invite_link, status = 'ACTIVE'`,
-      [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, freeComm]
-    );
+      // Look up member's existing referral history from Free Group join logs
+      let associateId = null;
+      let associateName = 'Unattributed / Direct';
 
-    console.log(`🎉 APPROVED & ATTRIBUTED MEMBER JOIN REQUEST: ${user.first_name} -> ${associateName}`);
-    return;
+      const existingMem = await runQuery(
+        `SELECT * FROM public.community_members_log WHERE telegram_user_id = $1 LIMIT 1`,
+        [user.id.toString()]
+      );
+
+      if (existingMem.rows.length > 0 && existingMem.rows[0].associate_name) {
+        associateId = existingMem.rows[0].associate_id;
+        associateName = existingMem.rows[0].associate_name;
+        console.log(`📌 REFERRED ASSOCIATE FROM FREE GROUP: ${user.first_name} was originally referred by ${associateName}`);
+      } else {
+        const resolved = await resolveAssociateFromLink(req.invite_link || inviteLink);
+        associateId = resolved.associateId;
+        associateName = resolved.associateName;
+      }
+
+      // Log or update pending VIP join request in CRM database
+      const logId = `MEM-${Date.now().toString().substring(5)}`;
+      await runQuery(
+        `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'PAID_VIP_PENDING', 'PENDING_APPROVAL')
+         ON CONFLICT (telegram_user_id) DO UPDATE SET group_id = EXCLUDED.group_id, group_name = EXCLUDED.group_name, member_tier = 'PAID_VIP_PENDING', status = 'PENDING_APPROVAL'`,
+        [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle]
+      );
+
+      // Package Tier Selection Keyboard for Owner
+      const packageKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '💵 $250 (Quarterly)', callback_data: `confirm_sub:${user.id}:250` },
+            { text: '⭐️ $350 (Half-Yearly)', callback_data: `confirm_sub:${user.id}:350` }
+          ],
+          [
+            { text: '🎁 $700 (Yearly)', callback_data: `confirm_sub:${user.id}:700` },
+            { text: '⚡️ Custom $500', callback_data: `confirm_sub:${user.id}:500` }
+          ]
+        ]
+      };
+
+      // Notify Owner(s) via Telegram DM with Referral Info & Package Selector
+      await broadcastToOwners((ownerName) => ({
+        text: `👑 *HIGH TABLE JOIN REQUEST RECEIVED!*\n\nHi *${ownerName}*,\nMember *${user.first_name}* (${user.username ? '@' + user.username : 'ID: ' + user.id}) has sent a join request to *High Table*!\n\n📌 *Referred Associate:* *${associateName}*\n\n⚠️ *Note:* The bot will NOT auto-approve this member. Please accept the member in Telegram manually after selecting their subscription package below:\n\n👇 *Select package paid by member:*`,
+        reply_markup: packageKeyboard
+      }));
+
+      return;
+    } else {
+      // 🆓 FREE GROUP WORKFLOW: AUTO-APPROVE INSTANTLY
+      await apiCall('approveChatJoinRequest', {
+        chat_id: groupId,
+        user_id: user.id
+      });
+
+      const { associateId, associateName, freeComm } = await resolveAssociateFromLink(req.invite_link || inviteLink);
+
+      const logId = `MEM-${Date.now().toString().substring(5)}`;
+      await runQuery(
+        `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status, free_commission)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'FREE_ONLY', 'ACTIVE', $10)
+         ON CONFLICT (telegram_user_id) DO UPDATE SET associate_id = EXCLUDED.associate_id, associate_name = EXCLUDED.associate_name, used_invite_link = EXCLUDED.used_invite_link, status = 'ACTIVE'`,
+        [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, freeComm]
+      );
+
+      console.log(`🎉 FREE GROUP JOIN REQUEST APPROVED: ${user.first_name} -> ${associateName}`);
+      return;
+    }
   }
 
   if (update.chat_member) {
