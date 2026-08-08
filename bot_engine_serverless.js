@@ -418,10 +418,57 @@ async function sendPendingTasksForChat(chatId) {
   }
 }
 
+function parseSignalData(rawText) {
+  let symbol = 'CRYPTO';
+  let entry = 'Market';
+  let tp = 'Open Target';
+  let sl = 'Strict SL';
+  let leverage = '1x-3x';
+  let notes = '';
+
+  const lines = (rawText || '').split('\n').map(l => l.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    const lUpper = line.toUpperCase();
+    if (lUpper.includes('$') || /^[A-Z0-9]{2,10}\s*(USDT|PERP|CALL)?$/i.test(line)) {
+      symbol = line.replace(/^\$/, '').trim();
+    } else if (lUpper.includes('ENTRY')) {
+      entry = line.replace(/^.*ENTRY\s*~?:?\s*/i, '').trim() || line;
+    } else if (lUpper.includes('TP')) {
+      tp = line.replace(/^.*TP\s*~?:?\s*/i, '').trim() || line;
+    } else if (lUpper.includes('SL')) {
+      sl = line.replace(/^.*SL\s*~?:?\s*/i, '').trim() || line;
+    } else if (lUpper.includes('LEVERAGE')) {
+      leverage = line.replace(/^.*LEVERAGE\s*~?:?\s*/i, '').trim() || line;
+    } else {
+      if (notes) notes += '\n' + line;
+      else notes = line;
+    }
+  }
+
+  return { symbol, entry, tp, sl, leverage, notes };
+}
+
+function buildFormattedSignalText(symbol, entry, tp, sl, leverage, notes) {
+  const symClean = symbol.startsWith('$') ? symbol : `$${symbol.toUpperCase()}`;
+  let card = `💰 *${symClean} TRADING SIGNAL*\n\n`;
+  card += `📍 *ENTRY:* \`${entry}\`\n`;
+  card += `🎯 *TP:* \`${tp}\`\n`;
+  card += `🛑 *SL:* \`${sl}\`\n`;
+  card += `⚡️ *LEVERAGE:* \`${leverage}\`\n`;
+
+  if (notes) {
+    card += `\n💡 *SPECIALIZED SETUP NOTES:*\n_${notes}_\n`;
+  }
+  return card;
+}
+
 async function registerBotCommands() {
   try {
     await apiCall('setMyCommands', {
       commands: [
+        { command: 'signal', description: '📊 Post Trade Signal Setup (Owner & Associate)' },
+        { command: 'closesignal', description: '🎯 Close / Update Active Trade Signal' },
         { command: 'enroll_vip', description: '👑 Enroll VIP Member (Owner Tool)' },
         { command: 'start', description: '⚡️ Open Operations Main Menu & Buttons' },
         { command: 'register', description: '✍️ Register as Team Creator' },
@@ -438,17 +485,25 @@ async function registerBotCommands() {
 registerBotCommands();
 
 async function handleUpdate(update) {
-  if (update.message && update.message.text) {
+  if (update.message && (update.message.text || update.message.caption || update.message.photo)) {
     const msg = update.message;
     const chatId = msg.chat.id;
-    const text = msg.text.trim();
+    const text = (msg.text || msg.caption || '').trim();
 
     const isOwnerRes = await runQuery(`SELECT * FROM public.owners WHERE telegram_chat_id = $1 LIMIT 1`, [chatId.toString()]);
     const isOwner = isOwnerRes.rows.length > 0;
 
+    const isAscRes = await runQuery(
+      `SELECT * FROM public.associates WHERE telegram_handle ILIKE $1 OR name ILIKE $2 LIMIT 1`,
+      [msg.from && msg.from.username ? `@${msg.from.username}` : '___', msg.from && msg.from.first_name ? `%${msg.from.first_name}%` : '___']
+    );
+    const isAssociate = isAscRes.rows.length > 0;
+    const isAuthorizedSignalCreator = isOwner || isAssociate;
+
     const mainKeyboard = {
-      keyboard: isOwner ? [
-        [{ text: '👑 Enroll VIP Member' }, { text: '📋 My Daily Tasks' }],
+      keyboard: isAuthorizedSignalCreator ? [
+        [{ text: '📊 Post Trade Signal' }, { text: '🎯 Update Signal Result' }],
+        isOwner ? [{ text: '👑 Enroll VIP Member' }, { text: '📋 My Daily Tasks' }] : [{ text: '✍️ Register as Creator' }, { text: '📋 My Daily Tasks' }],
         [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
       ] : [
         [{ text: '✍️ Register as Creator' }, { text: '📋 My Daily Tasks' }],
@@ -603,6 +658,72 @@ async function handleUpdate(update) {
         await finalizeVipEnrollment(chatId, session.flowType, session.targetUserId, session.subVal, months, parsedDate);
         return;
       }
+      else if (session.type === 'SIGNAL_INPUT_SETUP') {
+        const photoArray = msg.photo;
+        const photoFileId = photoArray && photoArray.length > 0 ? photoArray[photoArray.length - 1].file_id : null;
+        const rawText = (msg.caption || msg.text || '').trim();
+
+        if (!rawText && !photoFileId) {
+          await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Please send trade signal parameters (e.g., $KGEN Entry 0.24-0.20 TP 0.35-0.70 SL 0.13 Leverage 1x-3x).` });
+          return;
+        }
+
+        const parsed = parseSignalData(rawText);
+        const formattedText = buildFormattedSignalText(parsed.symbol, parsed.entry, parsed.tp, parsed.sl, parsed.leverage, parsed.notes);
+
+        activeSessions[chatId] = {
+          type: 'SIGNAL_PREVIEW_CONFIRM',
+          symbol: parsed.symbol,
+          entry: parsed.entry,
+          tp: parsed.tp,
+          sl: parsed.sl,
+          leverage: parsed.leverage,
+          notes: parsed.notes,
+          photoFileId,
+          formattedText,
+          creatorId: session.creatorId,
+          creatorName: session.creatorName,
+          creatorType: session.creatorType
+        };
+
+        const previewKeyboard = {
+          inline_keyboard: [
+            [ { text: '👑 High Table VIP Only', callback_data: 'sig_target:VIP' } ],
+            [ { text: '📢 Both Free & High Table VIP', callback_data: 'sig_target:BOTH' } ],
+            [ { text: '✍️ Re-enter Signal', callback_data: 'sig_target:RETRY' }, { text: '❌ Cancel', callback_data: 'sig_target:CANCEL' } ]
+          ]
+        };
+
+        if (photoFileId) {
+          await apiCall('sendPhoto', {
+            chat_id: chatId,
+            photo: photoFileId,
+            caption: `📋 *LIVE PREVIEW OF TRADE SIGNAL MESSAGE:*\n\n${formattedText}\n\n👇 *Select target group to broadcast:*`,
+            parse_mode: 'Markdown',
+            reply_markup: previewKeyboard
+          });
+        } else {
+          await apiCall('sendMessage', {
+            chat_id: chatId,
+            text: `📋 *LIVE PREVIEW OF TRADE SIGNAL MESSAGE:*\n\n${formattedText}\n\n👇 *Select target group to broadcast:*`,
+            parse_mode: 'Markdown',
+            reply_markup: previewKeyboard
+          });
+        }
+        return;
+      }
+      else if (session.type === 'SIGNAL_CUSTOM_PNL_INPUT') {
+        const pnlInput = text.replace(/[^0-9\.\-]/g, '');
+        const pnlVal = Number(pnlInput);
+        if (isNaN(pnlVal)) {
+          await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Invalid number. Please reply with profit/loss percentage e.g. \`145\` or \`-15\`:` });
+          return;
+        }
+
+        delete activeSessions[chatId];
+        await finalizeSignalResult(chatId, session.sigId, 'CUSTOM', pnlVal);
+        return;
+      }
       else if (session.type === 'PLATFORM_ONBOARDING') {
         const profileHandleOrLink = text.trim().split('\n')[0].trim();
         const credId = `CRD-${Date.now().toString().substring(5)}`;
@@ -624,6 +745,72 @@ async function handleUpdate(update) {
         chat_id: chatId, 
         text: `👑 *OWNER REGISTRATION:* Send your full display name:`, 
         parse_mode: 'Markdown' 
+      });
+      return;
+    }
+
+    // --- 📊 TRADE SIGNAL POSTING WIZARD ---
+    if (text.includes('Post Trade Signal') || text.startsWith('/signal')) {
+      if (!isAuthorizedSignalCreator) {
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `⚠️ *ACCESS RESTRICTED*: Trade Signal posting is reserved for System Owners & Authorized Associates.`,
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
+
+      const creatorName = isAssociate ? isAscRes.rows[0].name : (isOwnerRes.rows[0]?.name || 'System Owner');
+      const creatorId = isAssociate ? isAscRes.rows[0].id : chatId.toString();
+      const creatorType = isAssociate ? 'ASSOCIATE' : 'OWNER';
+
+      activeSessions[chatId] = {
+        type: 'SIGNAL_INPUT_SETUP',
+        creatorId,
+        creatorName,
+        creatorType
+      };
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `📊 *POST NEW TRADE SIGNAL SETUP*\n\nHello *${creatorName}*! Please send your trade setup details.\n\n*Example Format:* (or paste raw text)\n\`$KGEN\`\n\`ENTRY ~ 0.24 - 0.20\`\n\`TP ~ 0.35 - 0.70\`\n\`SL ~ 0.13\`\n\`LEVERAGE: 1x - 3x\`\n\n💡 *Optional*: You can attach a **Chart / Setup Screenshot Image** alongside your text!`,
+        parse_mode: 'Markdown'
+      });
+      return;
+    }
+
+    // --- 🎯 UPDATE / CLOSE ACTIVE SIGNAL WORKFLOW ---
+    if (text.includes('Update Signal Result') || text.startsWith('/closesignal') || text.startsWith('/closesig')) {
+      if (!isAuthorizedSignalCreator) {
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `⚠️ *ACCESS RESTRICTED*: Trade Signal closing is reserved for System Owners & Authorized Associates.`,
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
+
+      const activeSigsRes = await runQuery(`SELECT * FROM public.trade_signals_log WHERE status = 'ACTIVE' ORDER BY created_at DESC LIMIT 10`);
+      const activeSigs = activeSigsRes.rows || [];
+
+      if (activeSigs.length === 0) {
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `🎉 *NO ACTIVE TRADE SIGNALS*\n\nAll posted trade signals are currently closed/completed!`,
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
+
+      const inlineKeyboard = activeSigs.map(s => [
+        { text: `🎯 $${s.symbol} (Entry: ${s.entry_range})`, callback_data: `sig_close_select:${s.id}` }
+      ]);
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `🎯 *SELECT ACTIVE SIGNAL TO CLOSE / UPDATE RESULT:*\n\nTap the active signal below:`,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: inlineKeyboard }
       });
       return;
     }
@@ -1160,7 +1347,253 @@ async function handleUpdate(update) {
       const months = session.months || 8;
       await finalizeVipEnrollment(chatId, session.flowType, session.targetUserId, session.subVal, months, customDate);
     }
+    else if (data.startsWith('sig_target:')) {
+      const action = data.split(':')[1];
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+      const session = activeSessions[chatId];
+      if (!session) {
+        await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Session expired. Please type /signal to try again.` });
+        return;
+      }
+
+      if (action === 'CANCEL') {
+        delete activeSessions[chatId];
+        await apiCall('sendMessage', { chat_id: chatId, text: `❌ Signal posting cancelled.` });
+        return;
+      } else if (action === 'RETRY') {
+        activeSessions[chatId] = { ...session, type: 'SIGNAL_INPUT_SETUP' };
+        await apiCall('sendMessage', { chat_id: chatId, text: `✍️ Please re-send your trade signal text or chart photo:` });
+        return;
+      }
+
+      const targetAudience = action === 'VIP' ? 'HIGH_TABLE_VIP_ONLY' : 'FREE_AND_VIP';
+      const targetLabel = action === 'VIP' ? '👑 High Table VIP Only' : '📢 Both Free & High Table VIP Groups';
+
+      activeSessions[chatId] = {
+        ...session,
+        type: 'SIGNAL_DOUBLE_CONFIRM',
+        targetAudience,
+        targetLabel
+      };
+
+      const confirmKeyboard = {
+        inline_keyboard: [
+          [ { text: '✅ Confirm & Send Broadcast Live', callback_data: 'sig_send:CONFIRM' } ],
+          [ { text: '🔙 Back to Selection', callback_data: 'sig_send:BACK' } ]
+        ]
+      };
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `🔒 *DOUBLE-CONFIRMATION CHECK*\n\nTarget Broadcast Channel: *${targetLabel}*\nSymbol: *$${session.symbol.toUpperCase()}*\n\nAre you sure you want to broadcast this trade signal live to the channel(s)?`,
+        parse_mode: 'Markdown',
+        reply_markup: confirmKeyboard
+      });
+      return;
+    }
+    else if (data.startsWith('sig_send:')) {
+      const action = data.split(':')[1];
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+      const session = activeSessions[chatId];
+      if (!session) {
+        await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Session expired.` });
+        return;
+      }
+
+      if (action === 'BACK') {
+        activeSessions[chatId] = { ...session, type: 'SIGNAL_PREVIEW_CONFIRM' };
+        await apiCall('sendMessage', { chat_id: chatId, text: `↩️ Back to target selection. Please select group:` });
+        return;
+      } else if (action === 'CONFIRM') {
+        const sigId = `SIG-${Date.now().toString().substring(5)}`;
+        const formattedText = session.formattedText;
+        let vipMsgId = null;
+        let freeMsgId = null;
+
+        // Broadcast to High Table VIP (-1002607815374)
+        if (session.photoFileId) {
+          const resVip = await apiCall('sendPhoto', {
+            chat_id: '-1002607815374',
+            photo: session.photoFileId,
+            caption: formattedText,
+            parse_mode: 'Markdown'
+          });
+          if (resVip.ok && resVip.result) vipMsgId = resVip.result.message_id;
+        } else {
+          const resVip = await apiCall('sendMessage', {
+            chat_id: '-1002607815374',
+            text: formattedText,
+            parse_mode: 'Markdown'
+          });
+          if (resVip.ok && resVip.result) vipMsgId = resVip.result.message_id;
+        }
+
+        // Broadcast to Free Group (-1002628054504) if target is BOTH
+        if (session.targetAudience === 'FREE_AND_VIP') {
+          if (session.photoFileId) {
+            const resFree = await apiCall('sendPhoto', {
+              chat_id: '-1002628054504',
+              photo: session.photoFileId,
+              caption: formattedText,
+              parse_mode: 'Markdown'
+            });
+            if (resFree.ok && resFree.result) freeMsgId = resFree.result.message_id;
+          } else {
+            const resFree = await apiCall('sendMessage', {
+              chat_id: '-1002628054504',
+              text: formattedText,
+              parse_mode: 'Markdown'
+            });
+            if (resFree.ok && resFree.result) freeMsgId = resFree.result.message_id;
+          }
+        }
+
+        // Write to Supabase PostgreSQL database
+        await runQuery(`
+          INSERT INTO public.trade_signals_log (
+            id, symbol, creator_type, creator_id, creator_name, target_audience,
+            entry_range, take_profit_targets, stop_loss, leverage, custom_notes,
+            chart_image_url, status, vip_group_message_id, free_group_message_id, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ACTIVE', $13, $14, NOW())
+        `, [
+          sigId,
+          session.symbol.toUpperCase(),
+          session.creatorType || 'OWNER',
+          session.creatorId || chatId.toString(),
+          session.creatorName || 'System Owner',
+          session.targetAudience,
+          session.entry || 'Market',
+          session.tp || 'Open Target',
+          session.sl || 'Strict SL',
+          session.leverage || '1x-3x',
+          session.notes || '',
+          session.photoFileId || null,
+          vipMsgId,
+          freeMsgId
+        ]);
+
+        delete activeSessions[chatId];
+
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `🚀 *TRADE SIGNAL BROADCASTED LIVE & LOGGED TO CRM!*\n\nSignal ID: \`${sigId}\`\nTarget: *${session.targetLabel}*\n\nYou can track and update trade results anytime via /closesignal or the CRM Signals Desk!`,
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
+    }
+    else if (data.startsWith('sig_close_select:')) {
+      const sigId = data.split(':')[1];
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+
+      const res = await runQuery(`SELECT * FROM public.trade_signals_log WHERE id = $1 LIMIT 1`, [sigId]);
+      const sig = res.rows[0];
+      if (!sig) {
+        await apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Trade signal not found.` });
+        return;
+      }
+
+      const resultKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '🔥 TP1 Hit (+45%)', callback_data: `sig_resolve:${sigId}:TP1:45` },
+            { text: '🚀 TP2 Smashed (+120%)', callback_data: `sig_resolve:${sigId}:TP2:120` }
+          ],
+          [
+            { text: '🌕 TP Final Hit (+250%)', callback_data: `sig_resolve:${sigId}:TPF:250` },
+            { text: '🛑 SL Hit (-15%)', callback_data: `sig_resolve:${sigId}:SL:-15` }
+          ],
+          [
+            { text: '✍️ Custom PnL % Input', callback_data: `sig_resolve_custom:${sigId}` }
+          ]
+        ]
+      };
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `🎯 *UPDATE RESULT FOR SIGNAL $${sig.symbol}* (\`${sig.id}\`)\n\nSelect the trade result to broadcast to the group(s):`,
+        parse_mode: 'Markdown',
+        reply_markup: resultKeyboard
+      });
+      return;
+    }
+    else if (data.startsWith('sig_resolve_custom:')) {
+      const sigId = data.split(':')[1];
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+
+      activeSessions[chatId] = {
+        type: 'SIGNAL_CUSTOM_PNL_INPUT',
+        sigId
+      };
+
+      await apiCall('sendMessage', {
+        chat_id: chatId,
+        text: `✍️ *ENTER CUSTOM PNL PERCENTAGE*\n\nPlease reply with the profit or loss percentage (e.g., \`145\` for +145% or \`-15\` for -15%):`,
+        parse_mode: 'Markdown'
+      });
+      return;
+    }
+    else if (data.startsWith('sig_resolve:')) {
+      const parts = data.split(':');
+      const sigId = parts[1];
+      const type = parts[2];
+      const pnlVal = Number(parts[3]) || 0;
+      await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
+
+      await finalizeSignalResult(chatId, sigId, type, pnlVal);
+      return;
+    }
   }
+}
+
+async function finalizeSignalResult(chatId, sigId, type, pnlVal) {
+  const res = await runQuery(`SELECT * FROM public.trade_signals_log WHERE id = $1 LIMIT 1`, [sigId]);
+  const sig = res.rows[0];
+  if (!sig) return;
+
+  let label = 'COMPLETED';
+  let badge = '🔥 TP Hit!';
+  if (type === 'TP1') { label = 'TP1_HIT'; badge = '🔥 TP1 HIT'; }
+  else if (type === 'TP2') { label = 'TP2_HIT'; badge = '🚀 TP2 SMASHED!'; }
+  else if (type === 'TPF') { label = 'TP_FINAL_HIT'; badge = '🌕 FINAL TP SMASHED!'; }
+  else if (type === 'SL') { label = 'SL_HIT'; badge = '🛑 STOP LOSS HIT'; }
+
+  const pnlFormatted = pnlVal > 0 ? `+${pnlVal.toFixed(2)}%` : `${pnlVal.toFixed(2)}%`;
+  const summaryText = `${badge} (${pnlFormatted})`;
+
+  await runQuery(`
+    UPDATE public.trade_signals_log
+    SET status = $1, pnl_percentage = $2, pnl_summary_text = $3, closed_at = NOW()
+    WHERE id = $4
+  `, [label, pnlVal, summaryText, sigId]);
+
+  const resultText = `🎯 *TRADE CALL RESULT ANNOUNCEMENT — $${sig.symbol}*\n\nStatus: *${badge}*\nProfit / PnL: *${pnlFormatted}* ${pnlVal > 0 ? '🚀' : '🛑'}\n\nCongratulations to everyone who took this trade setup!`;
+
+  // Dispatch reply to High Table VIP
+  if (sig.vip_group_message_id) {
+    await apiCall('sendMessage', {
+      chat_id: '-1002607815374',
+      text: resultText,
+      reply_to_message_id: Number(sig.vip_group_message_id),
+      parse_mode: 'Markdown'
+    });
+  }
+
+  // Dispatch reply to Free Group if applicable
+  if (sig.target_audience === 'FREE_AND_VIP' && sig.free_group_message_id) {
+    await apiCall('sendMessage', {
+      chat_id: '-1002628054504',
+      text: resultText,
+      reply_to_message_id: Number(sig.free_group_message_id),
+      parse_mode: 'Markdown'
+    });
+  }
+
+  await apiCall('sendMessage', {
+    chat_id: chatId,
+    text: `🎉 *SIGNAL RESULT PUBLISHED & SYNCED TO CRM!*\n\nSymbol: *$${sig.symbol}*\nResult: *${summaryText}*\nBroadcasted live to channel(s).`,
+    parse_mode: 'Markdown'
+  });
 }
 
 async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months, customStartDate = null) {

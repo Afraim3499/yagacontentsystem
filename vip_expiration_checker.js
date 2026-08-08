@@ -131,8 +131,49 @@ async function checkVipExpirations() {
   }
 }
 
+async function checkActiveSignalReminders() {
+  console.log(`\n🔍 [${new Date().toISOString()}] Checking Active Trade Signal Reminders...`);
+
+  try {
+    const twoDaysAgo = new Date(Date.now() - (48 * 60 * 60 * 1000));
+
+    const activeSigs = await runQuery(
+      `SELECT * FROM public.trade_signals_log 
+       WHERE status = 'ACTIVE' AND created_at <= $1`,
+      [twoDaysAgo.toISOString()]
+    );
+
+    for (const sig of activeSigs.rows) {
+      const dateStr = new Date(sig.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const audienceStr = sig.target_audience === 'FREE_AND_VIP' ? 'Free & VIP' : 'High Table VIP';
+
+      await broadcastToOwners((ownerName) => ({
+        text: `⚠️ *UNRESOLVED TRADE SIGNAL ALERT!*\n\nHi *${ownerName}*,\nTrade signal **$${sig.symbol}** (Entry: \`${sig.entry_range}\`) has been active since **${dateStr}** (Target: *${audienceStr}*).\n\n📌 *Creator:* ${sig.creator_name}\n\n👇 *Don't forget to post trade call results:*`,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: `🎯 Close $${sig.symbol} Result`, callback_data: `sig_close_select:${sig.id}` }
+            ]
+          ]
+        }
+      }));
+
+      console.log(`⚠️ Alerted owners for unresolved signal $${sig.symbol} (${sig.id})`);
+    }
+
+    console.log(`✅ Active Signal Reminder Check Complete.`);
+  } catch (err) {
+    console.error('Error checking active signal reminders:', err);
+  }
+}
+
 // Run immediately on boot
 checkVipExpirations();
+checkActiveSignalReminders();
 
 // Run every 6 hours (6 * 60 * 60 * 1000 ms)
-setInterval(checkVipExpirations, 6 * 60 * 60 * 1000);
+setInterval(() => {
+  checkVipExpirations();
+  checkActiveSignalReminders();
+}, 6 * 60 * 60 * 1000);
+

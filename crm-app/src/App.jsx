@@ -14,6 +14,7 @@ import SettingsView from './components/views/SettingsView';
 import MemberTrackingDeskView from './components/views/MemberTrackingDeskView';
 import ReviewModerationDeskView from './components/views/ReviewModerationDeskView';
 import VipMembersDeskView from './components/views/VipMembersDeskView';
+import TradeSignalsDeskView from './components/views/TradeSignalsDeskView';
 import CrmLockScreen from './components/CrmLockScreen';
 
 function toCreator(row, voiceRow) {
@@ -377,6 +378,10 @@ export default function App() {
               conversions={conversions}
               onDispatchBatchSuccess={fetchAllData}
             />
+          )}
+
+          {activeTab === 'signals' && (
+            <TradeSignalsDeskView />
           )}
 
           {activeTab === 'vip' && (
