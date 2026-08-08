@@ -418,11 +418,45 @@ async function sendPendingTasksForChat(chatId) {
   }
 }
 
+async function registerBotCommands() {
+  try {
+    await apiCall('setMyCommands', {
+      commands: [
+        { command: 'enroll_vip', description: '👑 Enroll VIP Member (Owner Tool)' },
+        { command: 'start', description: '⚡️ Open Operations Main Menu & Buttons' },
+        { command: 'register', description: '✍️ Register as Team Creator' },
+        { command: 'tasks', description: '📋 View My Daily Assignments' },
+        { command: 'onboard', description: '🌐 Setup Target Platform Accounts' },
+        { command: 'issue', description: '⚠️ Report a Platform Problem' }
+      ]
+    });
+    console.log('✅ Telegram Bot Commands Menu Registered Successfully!');
+  } catch (e) {
+    console.error('Failed to register bot commands:', e);
+  }
+}
+registerBotCommands();
+
 async function handleUpdate(update) {
   if (update.message && update.message.text) {
     const msg = update.message;
     const chatId = msg.chat.id;
     const text = msg.text.trim();
+
+    const isOwnerRes = await runQuery(`SELECT * FROM public.owners WHERE telegram_chat_id = $1 LIMIT 1`, [chatId.toString()]);
+    const isOwner = isOwnerRes.rows.length > 0;
+
+    const mainKeyboard = {
+      keyboard: isOwner ? [
+        [{ text: '👑 Enroll VIP Member' }, { text: '📋 My Daily Tasks' }],
+        [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
+      ] : [
+        [{ text: '✍️ Register as Creator' }, { text: '📋 My Daily Tasks' }],
+        [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
+      ],
+      resize_keyboard: true,
+      persistent: true
+    };
 
     if (activeSessions[chatId]) {
       const session = activeSessions[chatId];
@@ -471,19 +505,61 @@ async function handleUpdate(update) {
           chat_id: chatId,
           text: `🎉 *CREATOR REGISTRATION COMPLETE!*\n\nHello *${publicName}* (\`${newId}\`)! You are registered on Yaga Calls.\n\nNext step: Click **[🌐 Setup Platforms]** below to submit your target social media handles/links.`,
           parse_mode: 'Markdown',
-          reply_markup: creatorKeyboard
+          reply_markup: mainKeyboard
         });
         return;
       }
       else if (session.type === 'OWNER_REGISTRATION') {
         const ownerName = text;
         const ownerId = `OWN-${Date.now().toString().substring(7)}`;
-        await runQuery(
-          `INSERT INTO public.owners (id, name, telegram_chat_id, active) VALUES ($1, $2, $3, true) ON CONFLICT (telegram_chat_id) DO UPDATE SET name = $2, active = true`,
-          [ownerId, ownerName, chatId.toString()]
-        );
+        
+        const existingOwner = await runQuery(`SELECT id FROM public.owners WHERE telegram_chat_id = $1 LIMIT 1`, [chatId.toString()]);
+        if (existingOwner.rows.length > 0) {
+          await runQuery(`UPDATE public.owners SET name = $1, active = true WHERE telegram_chat_id = $2`, [ownerName, chatId.toString()]);
+        } else {
+          await runQuery(
+            `INSERT INTO public.owners (id, name, telegram_chat_id, active) VALUES ($1, $2, $3, true)`,
+            [ownerId, ownerName, chatId.toString()]
+          );
+        }
+
         delete activeSessions[chatId];
-        await apiCall('sendMessage', { chat_id: chatId, text: `👑 *WELCOME OWNER ${ownerName.toUpperCase()}!* All alerts are active.`, parse_mode: 'Markdown' });
+        await apiCall('sendMessage', { 
+          chat_id: chatId, 
+          text: `👑 *WELCOME OWNER ${ownerName.toUpperCase()}!* All alerts are active.`, 
+          parse_mode: 'Markdown',
+          reply_markup: mainKeyboard
+        });
+        return;
+      }
+      else if (session.type === 'VIP_ENROLL_MEMBER_NAME') {
+        const memberInput = text.trim();
+        const ascRes = await runQuery(`SELECT * FROM public.associates ORDER BY name ASC`);
+        const associatesList = ascRes.rows;
+
+        // Build Associate Selector Keyboard
+        const inlineKeyboard = [];
+        for (let i = 0; i < associatesList.length; i += 2) {
+          const row = [];
+          row.push({ text: `👤 ${associatesList[i].name}`, callback_data: `vip_asc:${associatesList[i].id}` });
+          if (associatesList[i + 1]) {
+            row.push({ text: `👤 ${associatesList[i + 1].name}`, callback_data: `vip_asc:${associatesList[i + 1].id}` });
+          }
+          inlineKeyboard.push(row);
+        }
+        inlineKeyboard.push([{ text: `🌐 Direct / Unattributed VIP`, callback_data: `vip_asc:DIRECT` }]);
+
+        activeSessions[chatId] = {
+          type: 'VIP_ENROLL_SELECT_ASC',
+          memberName: memberInput
+        };
+
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `📌 *SELECT REFERRED ASSOCIATE FOR ${memberInput}:*\n\nClick the Associate whose invite link brought this member to the Free Group:`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: inlineKeyboard }
+        });
         return;
       }
       else if (session.type === 'PLATFORM_CREDENTIALS') {
@@ -495,7 +571,7 @@ async function handleUpdate(update) {
         );
         await runQuery(`UPDATE public.accounts SET posting_ready = true, status = 'Active', handle = $1 WHERE id = $2`, [profileHandleOrLink, session.accountId]);
         delete activeSessions[chatId];
-        await apiCall('sendMessage', { chat_id: chatId, text: `🎉 *PLATFORM ONBOARDED!* Account \`${profileHandleOrLink}\` is active!`, parse_mode: 'Markdown' });
+        await apiCall('sendMessage', { chat_id: chatId, text: `🎉 *PLATFORM ONBOARDED!* Account \`${profileHandleOrLink}\` is active!`, parse_mode: 'Markdown', reply_markup: mainKeyboard });
         await broadcastToOwners((ownerName) => `✅ *ACCOUNT ACTIVATED* Hi *${ownerName}*, creator ${session.creatorName} setup \`${profileHandleOrLink}\`.`);
         return;
       }
@@ -513,12 +589,11 @@ async function handleUpdate(update) {
 
     // --- 👑 OWNER VIP MEMBER MANUAL ENROLLMENT WORKFLOW ---
     if (text.includes('Enroll VIP') || text.startsWith('/enroll_vip') || text.startsWith('/vip')) {
-      const ownerRes = await runQuery(`SELECT * FROM public.owners WHERE telegram_chat_id = $1 LIMIT 1`, [chatId]);
-      if (ownerRes.rows.length === 0) {
-        // Auto register as owner if not present
+      if (!isOwner) {
+        const ownerId = `OWN-${Date.now().toString().substring(5)}`;
         await runQuery(
-          `INSERT INTO public.owners (id, name, telegram_chat_id, role, active) VALUES ($1, $2, $3, 'SYSTEM_OWNER', true) ON CONFLICT (telegram_chat_id) DO NOTHING`,
-          [`OWN-${Date.now().toString().substring(5)}`, msg.from.first_name || 'System Owner', chatId]
+          `INSERT INTO public.owners (id, name, telegram_chat_id, role, active) VALUES ($1, $2, $3, 'SYSTEM_OWNER', true)`,
+          [ownerId, msg.from.first_name || 'System Owner', chatId.toString()]
         );
       }
 
@@ -530,72 +605,6 @@ async function handleUpdate(update) {
       });
       return;
     }
-
-    // --- STEP 1 RESPONSE: OWNER REPLIED WITH MEMBER NAME ---
-    if (session && session.type === 'VIP_ENROLL_MEMBER_NAME') {
-      const memberInput = text.trim();
-      const ascRes = await runQuery(`SELECT * FROM public.associates ORDER BY name ASC`);
-      const associatesList = ascRes.rows;
-
-      // Build Associate Selector Keyboard
-      const inlineKeyboard = [];
-      for (let i = 0; i < associatesList.length; i += 2) {
-        const row = [];
-        row.push({ text: `👤 ${associatesList[i].name}`, callback_data: `vip_asc:${associatesList[i].id}` });
-        if (associatesList[i + 1]) {
-          row.push({ text: `👤 ${associatesList[i + 1].name}`, callback_data: `vip_asc:${associatesList[i + 1].id}` });
-        }
-        inlineKeyboard.push(row);
-      }
-      inlineKeyboard.push([{ text: `🌐 Direct / Unattributed VIP`, callback_data: `vip_asc:DIRECT` }]);
-
-      activeSessions[chatId] = {
-        type: 'VIP_ENROLL_SELECT_ASC',
-        memberName: memberInput
-      };
-
-      await apiCall('sendMessage', {
-        chat_id: chatId,
-        text: `📌 *SELECT REFERRED ASSOCIATE FOR ${memberInput}:*\n\nClick the Associate whose invite link brought this member to the Free Group:`,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: inlineKeyboard }
-      });
-      return;
-    }
-
-async function registerBotCommands() {
-  try {
-    await apiCall('setMyCommands', {
-      commands: [
-        { command: 'enroll_vip', description: '👑 Enroll VIP Member (Owner Tool)' },
-        { command: 'start', description: '⚡️ Open Operations Main Menu & Buttons' },
-        { command: 'register', description: '✍️ Register as Team Creator' },
-        { command: 'tasks', description: '📋 View My Daily Assignments' },
-        { command: 'onboard', description: '🌐 Setup Target Platform Accounts' },
-        { command: 'issue', description: '⚠️ Report a Platform Problem' }
-      ]
-    });
-    console.log('✅ Telegram Bot Commands Menu Registered Successfully!');
-  } catch (e) {
-    console.error('Failed to register bot commands:', e);
-  }
-}
-registerBotCommands();
-
-    const isOwnerRes = await runQuery(`SELECT * FROM public.owners WHERE telegram_chat_id = $1 LIMIT 1`, [chatId]);
-    const isOwner = isOwnerRes.rows.length > 0;
-
-    const mainKeyboard = {
-      keyboard: isOwner ? [
-        [{ text: '👑 Enroll VIP Member' }, { text: '📋 My Daily Tasks' }],
-        [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
-      ] : [
-        [{ text: '✍️ Register as Creator' }, { text: '📋 My Daily Tasks' }],
-        [{ text: '🌐 Setup Platforms' }, { text: '⚠️ Report a Problem' }]
-      ],
-      resize_keyboard: true,
-      persistent: true
-    };
 
     if (text.includes('Register as Creator') || text.startsWith('/registration') || text.startsWith('/register')) {
       const existing = await getCreatorByChatId(chatId);
@@ -650,7 +659,7 @@ registerBotCommands();
     if (text.includes('Setup Platforms') || text.startsWith('/onboard')) {
       const creator = await getCreatorByChatId(chatId);
       if (creator) sendPlatformOnboardingCard(chatId, creator);
-      else apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Please click ✍️ Register as Creator first.`, reply_markup: creatorKeyboard });
+      else apiCall('sendMessage', { chat_id: chatId, text: `⚠️ Please click ✍️ Register as Creator first.`, reply_markup: mainKeyboard });
       return;
     }
 
@@ -671,7 +680,7 @@ registerBotCommands();
         chat_id: chatId, 
         text: `🚨 *ISSUE LOGGED:* Ticket \`${issueId}\` has been submitted to the CRM Issue Desk.\n\nOur system owner will inspect it shortly.`, 
         parse_mode: 'Markdown',
-        reply_markup: creatorKeyboard
+        reply_markup: mainKeyboard
       });
       return;
     }
