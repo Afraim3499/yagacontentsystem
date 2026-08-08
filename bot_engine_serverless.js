@@ -571,6 +571,35 @@ async function handleUpdate(update) {
         await finalizeVipEnrollment(chatId, session.flowType, session.targetUserId, session.subVal, inputNum);
         return;
       }
+      else if (session.type === 'VIP_ENROLL_CUSTOM_START_DATE') {
+        const parts = text.split(',');
+        const dateRaw = parts[0].trim();
+        const monthsRaw = parts[1] ? parseInt(parts[1].trim()) : 6;
+        const months = (!isNaN(monthsRaw) && monthsRaw > 0) ? monthsRaw : 6;
+
+        let parsedDate = null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
+          parsedDate = new Date(dateRaw);
+        } else if (/^\d{2}[\/\-]\d{2}[\/\-]\d{4}$/.test(dateRaw)) {
+          const p = dateRaw.split(/[\/\-]/);
+          parsedDate = new Date(`${p[2]}-${p[1]}-${p[0]}`);
+        } else {
+          parsedDate = new Date(dateRaw);
+        }
+
+        if (!parsedDate || isNaN(parsedDate.getTime())) {
+          await apiCall('sendMessage', {
+            chat_id: chatId,
+            text: `⚠️ *INVALID DATE FORMAT*\n\nPlease reply in format \`YYYY-MM-DD, MONTHS\`\n_(e.g., \`2025-11-15, 8\` or \`2026-01-01, 14\` or \`15/11/2025, 6\`)_:`,
+            parse_mode: 'Markdown'
+          });
+          return;
+        }
+
+        await finalizeVipEnrollment(chatId, session.flowType, session.targetUserId, session.subVal, months, parsedDate);
+        return;
+      }
+      else if (session.type === 'PLATFORM_ONBOARDING') {
         const profileHandleOrLink = text.trim().split('\n')[0].trim();
         const credId = `CRD-${Date.now().toString().substring(5)}`;
         await runQuery(
@@ -583,7 +612,7 @@ async function handleUpdate(update) {
         await broadcastToOwners((ownerName) => `✅ *ACCOUNT ACTIVATED* Hi *${ownerName}*, creator ${session.creatorName} setup \`${profileHandleOrLink}\`.`);
         return;
       }
-    }
+    } // End of activeSessions handling
 
     if (text.startsWith('/owner') || text.startsWith('/admin')) {
       activeSessions[chatId] = { type: 'OWNER_REGISTRATION' };
@@ -692,7 +721,7 @@ async function handleUpdate(update) {
       });
       return;
     }
-  }
+  } // End of message text handling
 
   if (update.chat_join_request) {
     const req = update.chat_join_request;
@@ -946,13 +975,16 @@ async function handleUpdate(update) {
           [
             { text: '12 Months', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:12` },
             { text: '✍️ Custom Months', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:CUSTOM` }
+          ],
+          [
+            { text: '📅 Custom Start Date & Months', callback_data: `vip_dur:REQ:${targetUserId}:${subAmount}:CUSTOM_DATE` }
           ]
         ]
       };
 
       await apiCall('sendMessage', {
         chat_id: chatId,
-        text: `⏳ *SELECT SUBSCRIPTION DURATION FOR MEMBER ($${subAmount} TIER):*\n\nClick standard duration, promotional offer (8 or 14 months), or custom:`,
+        text: `⏳ *SELECT SUBSCRIPTION DURATION FOR MEMBER ($${subAmount} TIER):*\n\nClick standard duration, promotional offer (8 or 14 months), custom months, or custom start date:`,
         parse_mode: 'Markdown',
         reply_markup: durationKeyboard
       });
@@ -1022,13 +1054,16 @@ async function handleUpdate(update) {
           [
             { text: '12 Months', callback_data: `vip_dur:MANUAL:0:${subVal}:12` },
             { text: '✍️ Custom Months', callback_data: `vip_dur:MANUAL:0:${subVal}:CUSTOM` }
+          ],
+          [
+            { text: '📅 Custom Start Date & Months', callback_data: `vip_dur:MANUAL:0:${subVal}:CUSTOM_DATE` }
           ]
         ]
       };
 
       await apiCall('sendMessage', {
         chat_id: chatId,
-        text: `⏳ *SELECT SUBSCRIPTION DURATION FOR ${session.memberName} ($${subVal} TIER):*\n\nClick standard duration, promotional offer (8 or 14 months), or custom:`,
+        text: `⏳ *SELECT SUBSCRIPTION DURATION FOR ${session.memberName} ($${subVal} TIER):*\n\nClick standard duration, promotional offer (8 or 14 months), custom months, or custom start date:`,
         parse_mode: 'Markdown',
         reply_markup: durationKeyboard
       });
@@ -1055,6 +1090,20 @@ async function handleUpdate(update) {
         });
         return;
       }
+      else if (monthsArg === 'CUSTOM_DATE') {
+        activeSessions[chatId] = {
+          type: 'VIP_ENROLL_CUSTOM_START_DATE',
+          flowType,
+          targetUserId,
+          subVal
+        };
+        await apiCall('sendMessage', {
+          chat_id: chatId,
+          text: `📅 *ENTER CUSTOM ENROLLMENT START DATE & DURATION*\n\nPlease reply with the exact Start Date and Duration in format:\n\`YYYY-MM-DD, MONTHS\`\n\n*Examples:*\n• \`2025-11-15, 8\` _(Start Nov 15, 2025 for 8 Months Promo)_\n• \`2026-01-01, 14\` _(Start Jan 1, 2026 for 14 Months Promo)_\n• \`15/11/2025, 6\` _(Start Nov 15, 2025 for 6 Months)_`,
+          parse_mode: 'Markdown'
+        });
+        return;
+      }
 
       const months = Number(monthsArg) || 6;
       await finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months);
@@ -1062,11 +1111,16 @@ async function handleUpdate(update) {
   }
 }
 
-async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months) {
+async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months, customStartDate = null) {
   const commVal = Number((subVal * 0.05).toFixed(2));
-  const now = new Date();
+  const now = customStartDate ? new Date(customStartDate) : new Date();
   const expDate = new Date(now);
   expDate.setMonth(expDate.getMonth() + Number(months));
+
+  const realNow = new Date();
+  let subStatus = 'ACTIVE';
+  if (expDate <= realNow) subStatus = 'EXPIRED';
+  else if (expDate.getTime() - realNow.getTime() <= 7 * 24 * 60 * 60 * 1000) subStatus = 'EXPIRING_SOON';
 
   const isPromo = months === 8 || months === 14;
   const promoLabel = isPromo ? ' (Promo Offer)' : '';
@@ -1074,6 +1128,7 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
   const dateOpts = { month: 'short', day: 'numeric', year: 'numeric' };
   const joinedStr = now.toLocaleDateString('en-US', dateOpts);
   const expStr = expDate.toLocaleDateString('en-US', dateOpts);
+  const statusBadge = subStatus === 'EXPIRED' ? '🔴 EXPIRED' : subStatus === 'EXPIRING_SOON' ? '⚠️ EXPIRING SOON' : '🟢 ACTIVE';
 
   let memberName = 'VIP Member';
   let associateId = null;
@@ -1088,11 +1143,11 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
            status = 'ACTIVE',
            subscription_duration_months = $3,
            subscription_expiration_date = $4,
-           subscription_status = 'ACTIVE',
-           paid_group_joined_at = NOW()
-       WHERE telegram_user_id = $5
+           subscription_status = $5,
+           paid_group_joined_at = $6
+       WHERE telegram_user_id = $7
        RETURNING first_name, associate_id, associate_name`,
-      [subVal, commVal, months, expDate.toISOString(), targetUserId]
+      [subVal, commVal, months, expDate.toISOString(), subStatus, now.toISOString(), targetUserId]
     );
 
     const mem = memRes.rows[0];
@@ -1111,8 +1166,8 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
 
     await runQuery(
       `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id, subscription_duration_months, subscription_expiration_date, subscription_status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $9, NOW(), 'High Table (Paid VIP)', '-1002607815374', $10, $11, 'ACTIVE')`,
-      [logId, userId, handle, memberName, associateId, associateName, subVal, commVal, chatId.toString(), months, expDate.toISOString()]
+       VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $9, $10, 'High Table (Paid VIP)', '-1002607815374', $11, $12, $13)`,
+      [logId, userId, handle, memberName, associateId, associateName, subVal, commVal, chatId.toString(), now.toISOString(), months, expDate.toISOString(), subStatus]
     );
   }
 
@@ -1120,7 +1175,7 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
 
   await apiCall('sendMessage', {
     chat_id: chatId,
-    text: `✅ *VIP MEMBER ENROLLED SUCCESSFULLY!*\n\n👤 *Member:* **${memberName}**\n📌 *Attributed Associate:* **${associateName}**\n💎 *Subscription Package:* **$${subVal} Tier**\n⏳ *Duration:* **${months} Months${promoLabel}**\n📅 *Enrollment Date:* **${joinedStr}**\n⏰ *Expiration Date:* **${expStr}**\n🟢 *Status:* **ACTIVE**\n🤝 *5% Associate Commission:* **$${commVal.toFixed(2)}**\n\n⚡️ *Synced live to database and CRM VIP Members Desk!*`,
+    text: `✅ *VIP MEMBER ENROLLED SUCCESSFULLY!*\n\n👤 *Member:* **${memberName}**\n📌 *Attributed Associate:* **${associateName}**\n💎 *Subscription Package:* **$${subVal} Tier**\n⏳ *Duration:* **${months} Months${promoLabel}**\n📅 *Enrollment Date:* **${joinedStr}**\n⏰ *Expiration Date:* **${expStr}**\n${statusBadge} *Status:* **${subStatus}**\n🤝 *5% Associate Commission:* **$${commVal.toFixed(2)}**\n\n⚡️ *Synced live to database and CRM VIP Members Desk!*`,
     parse_mode: 'Markdown'
   });
 
