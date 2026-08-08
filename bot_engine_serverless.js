@@ -764,7 +764,7 @@ async function handleUpdate(update) {
       await runQuery(
         `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'PAID_VIP_PENDING', 'PENDING_APPROVAL')
-         ON CONFLICT (telegram_user_id) DO UPDATE SET group_id = EXCLUDED.group_id, group_name = EXCLUDED.group_name, member_tier = 'PAID_VIP_PENDING', status = 'PENDING_APPROVAL'`,
+         ON CONFLICT (telegram_user_id) DO UPDATE SET first_name = EXCLUDED.first_name, telegram_handle = EXCLUDED.telegram_handle, group_id = EXCLUDED.group_id, group_name = EXCLUDED.group_name, member_tier = 'PAID_VIP_PENDING', status = 'PENDING_APPROVAL'`,
         [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle]
       );
 
@@ -1148,12 +1148,23 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
            subscription_status = $6,
            paid_group_joined_at = $7
        WHERE telegram_user_id = $8
-       RETURNING first_name, associate_id, associate_name`,
+       RETURNING first_name, telegram_handle, associate_id, associate_name`,
       [subVal, commVal, kabidulCommVal, months, expDate.toISOString(), subStatus, now.toISOString(), targetUserId]
     );
 
     const mem = memRes.rows[0];
-    memberName = mem?.first_name || 'VIP Member';
+    const nameStr = mem?.first_name && mem.first_name !== 'VIP Member' && mem.first_name !== 'Member' ? mem.first_name : '';
+    const handleStr = mem?.telegram_handle ? mem.telegram_handle : '';
+    if (nameStr && handleStr && !nameStr.includes(handleStr)) {
+      memberName = `${nameStr} (${handleStr})`;
+    } else if (handleStr) {
+      memberName = handleStr;
+    } else if (nameStr) {
+      memberName = nameStr;
+    } else {
+      memberName = `Member ID: ${targetUserId}`;
+    }
+
     associateId = mem?.associate_id;
     associateName = mem?.associate_name || 'Direct VIP';
   } else {
