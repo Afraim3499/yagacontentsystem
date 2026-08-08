@@ -219,18 +219,88 @@ export default function TradeSignalsDeskView() {
     }
   }
 
-  // Create Trade Signal Handler
+  // Helper function to call Telegram API from CRM
+  async function callTelegramApi(method, payload) {
+    const BOT_TOKEN = '8446355677:AAGln29V9MXOifeJc5NBZT0Dn68Z8innrQw';
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      return await res.json();
+    } catch (e) {
+      console.error('Telegram API error from CRM:', e);
+      return { ok: false };
+    }
+  }
+
+  // Create Trade Signal Handler with Live Broadcast to Telegram Channels
   async function handleCreateSignal(e) {
     e.preventDefault();
     if (!newSymbol || !newEntry) return alert('Please enter Symbol and Entry Range.');
 
     const sigId = `SIG-${Date.now().toString().substring(5)}`;
+    const symClean = newSymbol.trim().toUpperCase().replace(/^\$/, '');
+    
+    // Format aesthetic markdown card
+    let card = `💰 *$${symClean} TRADING SIGNAL*\n\n`;
+    card += `📍 *ENTRY:* \`${newEntry.trim()}\`\n`;
+    card += `🎯 *TP:* \`${newTp.trim() || 'Open Target'}\`\n`;
+    card += `🛑 *SL:* \`${newSl.trim() || 'Strict SL'}\`\n`;
+    card += `⚡️ *LEVERAGE:* \`${newLeverage.trim() || '1x-3x'}\`\n`;
 
+    if (newNotes.trim()) {
+      card += `\n💡 *SPECIALIZED SETUP NOTES:*\n_${newNotes.trim()}_\n`;
+    }
+
+    let vipMsgId = null;
+    let freeMsgId = null;
+
+    // 1. Broadcast live to High Table VIP (-1002607815374)
+    if (newChartUrl.trim()) {
+      const resVip = await callTelegramApi('sendPhoto', {
+        chat_id: '-1002607815374',
+        photo: newChartUrl.trim(),
+        caption: card,
+        parse_mode: 'Markdown'
+      });
+      if (resVip.ok && resVip.result) vipMsgId = resVip.result.message_id;
+    } else {
+      const resVip = await callTelegramApi('sendMessage', {
+        chat_id: '-1002607815374',
+        text: card,
+        parse_mode: 'Markdown'
+      });
+      if (resVip.ok && resVip.result) vipMsgId = resVip.result.message_id;
+    }
+
+    // 2. Broadcast live to Free Group (-1002628054504) if target is BOTH
+    if (newAudience === 'FREE_AND_VIP') {
+      if (newChartUrl.trim()) {
+        const resFree = await callTelegramApi('sendPhoto', {
+          chat_id: '-1002628054504',
+          photo: newChartUrl.trim(),
+          caption: card,
+          parse_mode: 'Markdown'
+        });
+        if (resFree.ok && resFree.result) freeMsgId = resFree.result.message_id;
+      } else {
+        const resFree = await callTelegramApi('sendMessage', {
+          chat_id: '-1002628054504',
+          text: card,
+          parse_mode: 'Markdown'
+        });
+        if (resFree.ok && resFree.result) freeMsgId = resFree.result.message_id;
+      }
+    }
+
+    // 3. Write record to Supabase PostgreSQL DB
     const { error } = await supabase.from('trade_signals_log').insert([{
       id: sigId,
-      symbol: newSymbol.trim().toUpperCase().replace(/^\$/, ''),
+      symbol: symClean,
       creator_type: 'OWNER',
-      creator_name: 'CRM Admin',
+      creator_name: 'CRM Web Desk',
       target_audience: newAudience,
       entry_range: newEntry.trim(),
       take_profit_targets: newTp.trim() || 'Open Target',
@@ -240,13 +310,15 @@ export default function TradeSignalsDeskView() {
       chart_image_url: newChartUrl.trim() || null,
       status: 'ACTIVE',
       pnl_percentage: 0.00,
+      vip_group_message_id: vipMsgId,
+      free_group_message_id: freeMsgId,
       created_at: new Date().toISOString()
     }]);
 
     if (error) {
-      alert('Error creating trade signal: ' + error.message);
+      alert('Error saving signal to DB: ' + error.message);
     } else {
-      alert(`🎉 Trade Signal $${newSymbol.toUpperCase()} logged successfully!`);
+      alert(`🚀 Trade Signal $${symClean} broadcasted live to Telegram channel(s) and logged to CRM!`);
       setIsCreateModalOpen(false);
       setNewSymbol("");
       setNewEntry("");
@@ -258,7 +330,7 @@ export default function TradeSignalsDeskView() {
     }
   }
 
-  // Close Signal / Log Result Handler
+  // Close Signal / Log Result Handler with Live Reply Dispatch
   async function handleCloseSignalSubmit(e) {
     e.preventDefault();
     if (!closingSignal) return;
@@ -275,6 +347,28 @@ export default function TradeSignalsDeskView() {
     const pnlFormatted = pnlVal > 0 ? `+${pnlVal.toFixed(2)}%` : `${pnlVal.toFixed(2)}%`;
     const summaryText = `${badge} (${pnlFormatted})`;
 
+    const resultText = `🎯 *TRADE CALL RESULT ANNOUNCEMENT — $${closingSignal.symbol}*\n\nStatus: *${badge}*\nProfit / PnL: *${pnlFormatted}* ${pnlVal > 0 ? '🚀' : '🛑'}\n\nCongratulations to everyone who took this trade setup!`;
+
+    // Dispatch reply to High Table VIP
+    if (closingSignal.vip_group_message_id) {
+      await callTelegramApi('sendMessage', {
+        chat_id: '-1002607815374',
+        text: resultText,
+        reply_to_message_id: Number(closingSignal.vip_group_message_id),
+        parse_mode: 'Markdown'
+      });
+    }
+
+    // Dispatch reply to Free Group if applicable
+    if (closingSignal.target_audience === 'FREE_AND_VIP' && closingSignal.free_group_message_id) {
+      await callTelegramApi('sendMessage', {
+        chat_id: '-1002628054504',
+        text: resultText,
+        reply_to_message_id: Number(closingSignal.free_group_message_id),
+        parse_mode: 'Markdown'
+      });
+    }
+
     const { error } = await supabase.from('trade_signals_log').update({
       status: label,
       pnl_percentage: pnlVal,
@@ -285,7 +379,7 @@ export default function TradeSignalsDeskView() {
     if (error) {
       alert('Error closing signal: ' + error.message);
     } else {
-      alert(`🎉 Successfully closed trade signal $${closingSignal.symbol} with ${summaryText}!`);
+      alert(`🎉 Successfully closed signal $${closingSignal.symbol} with ${summaryText} & published result announcement to channel(s)!`);
       setIsCloseModalOpen(false);
       setClosingSignal(null);
       fetchSignals();
