@@ -1077,7 +1077,9 @@ async function handleUpdate(update) {
       await apiCall('answerCallbackQuery', { callback_query_id: cb.id });
 
       if (monthsArg === 'CUSTOM') {
+        const existingSession = activeSessions[chatId] || {};
         activeSessions[chatId] = {
+          ...existingSession,
           type: 'VIP_ENROLL_CUSTOM_DUR',
           flowType,
           targetUserId,
@@ -1091,7 +1093,9 @@ async function handleUpdate(update) {
         return;
       }
       else if (monthsArg === 'CUSTOM_DATE') {
+        const existingSession = activeSessions[chatId] || {};
         activeSessions[chatId] = {
+          ...existingSession,
           type: 'VIP_ENROLL_CUSTOM_START_DATE',
           flowType,
           targetUserId,
