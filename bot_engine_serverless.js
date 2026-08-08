@@ -494,8 +494,8 @@ async function handleUpdate(update) {
     const isOwner = isOwnerRes.rows.length > 0;
 
     const isAscRes = await runQuery(
-      `SELECT * FROM public.associates WHERE telegram_handle ILIKE $1 OR name ILIKE $2 LIMIT 1`,
-      [msg.from && msg.from.username ? `@${msg.from.username}` : '___', msg.from && msg.from.first_name ? `%${msg.from.first_name}%` : '___']
+      `SELECT * FROM public.associates WHERE telegram_chat_id = $1 OR name ILIKE $2 LIMIT 1`,
+      [chatId.toString(), msg.from && msg.from.first_name ? `%${msg.from.first_name}%` : '___']
     );
     const isAssociate = isAscRes.rows.length > 0;
     const isAuthorizedSignalCreator = isOwner || isAssociate;
