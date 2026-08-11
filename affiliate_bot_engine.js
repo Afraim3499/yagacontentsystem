@@ -396,7 +396,7 @@ const server = http.createServer(async (req, res) => {
 
   else if (req.url === '/api/affiliate/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yagapartnerbot', engine: 'Yaga Affiliate Engine' }));
+    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine' }));
   }
 
   else { res.writeHead(404); res.end(); }
