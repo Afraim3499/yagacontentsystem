@@ -180,6 +180,7 @@ Hello *${firstName}*! Turn your crypto network, trading audience, or social chan
 • *Native Telegram Link Tracking*: 0% cookie drop-off. Permanent attribution.
 • *Real-Time Notifications*: Instant alerts on free joinees & sales.
 • *Weekly Crypto Settlements*: USDT / USDC / SOL / BTC delivered every Friday.
+• *Direct Partner Email*: \`partner@yagacalls.com\` (Reach out anytime with queries!)
 
 ---
 ⚡️ *QUICK ONBOARDING STEPS:*
@@ -208,7 +209,7 @@ Hello *${firstName}*! Turn your crypto network, trading audience, or social chan
     }
 
     else if (text.startsWith('/help')) {
-      await sendMessage(chatId, `💬 *YAGA CALLS PARTNER SUPPORT*\n\nNeed custom commission rates, institutional partnerships, or payout assistance?\n\nContact our VIP Partner Manager directly: @yagacalls47`, getMainKeyboard());
+      await sendMessage(chatId, `💬 *YAGA CALLS PARTNER SUPPORT*\n\nHave any questions, need custom commission rates, institutional partnerships, or payout assistance?\n\n✉️ *Official Email*: \`partner@yagacalls.com\`\n📱 *Telegram Support*: @yagacalls47`, getMainKeyboard());
     }
   }
 
@@ -412,7 +413,12 @@ async function showHandbook(chatId) {
 *4. Weekly Crypto Settlements*
 - Settled in USDT (TRC20/ERC20), USDC, SOL, or BTC.
 - Minimum payout threshold: $50 USDT.
-- Issued weekly every Friday or upon request via CRM.`;
+- Issued weekly every Friday or upon request via CRM.
+
+*5. Direct Partner Support & Queries*
+- Have questions or need custom arrangements?
+- ✉️ Email: \`partner@yagacalls.com\`
+- 📱 Telegram: @yagacalls47`;
 
   await sendMessage(chatId, handbookMsg, getMainKeyboard(true));
 }
