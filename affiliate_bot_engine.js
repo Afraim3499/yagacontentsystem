@@ -1,16 +1,18 @@
 // ====================================================================
 // YAGA CALLS PARTNER PROGRAM — DEDICATED TELEGRAM BOT ENGINE (V2.0)
-// Bot Token: 8839038800:AAHLIOgv-dTxpMsXMLjXnimGJqXL-AN4e3I
 // Runs standalone or via PM2: node affiliate_bot_engine.js
 // ====================================================================
 
 const http = require('http');
 const { Client } = require('pg');
 
-const BOT_TOKEN = process.env.TELEGRAM_AFFILIATE_BOT_TOKEN || '8839038800:AAHLIOgv-dTxpMsXMLjXnimGJqXL-AN4e3I';
+const BOT_TOKEN = process.env.TELEGRAM_AFFILIATE_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error('❌ FATAL: TELEGRAM_AFFILIATE_BOT_TOKEN is not defined in environment variables!');
+}
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const FREE_GROUP_CHAT_ID = process.env.YAGA_FREE_GROUP_CHAT_ID || '-1002360563454'; // Yaga Calls Free Group
-const DB_CONNECTION = 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = process.env.AFFILIATE_BOT_PORT || 3005;
 
 // Memory state for user wallet entry prompts

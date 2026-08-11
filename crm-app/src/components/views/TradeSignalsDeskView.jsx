@@ -221,7 +221,11 @@ export default function TradeSignalsDeskView() {
 
   // Helper function to call Telegram API from CRM
   async function callTelegramApi(method, payload) {
-    const BOT_TOKEN = '8446355677:AAGln29V9MXOifeJc5NBZT0Dn68Z8innrQw';
+    const BOT_TOKEN = import.meta.env.VITE_TELEGRAM_BOT_TOKEN || (typeof process !== 'undefined' ? process.env.TELEGRAM_BOT_TOKEN : '');
+    if (!BOT_TOKEN) {
+      console.warn('Telegram Bot Token not configured in VITE_TELEGRAM_BOT_TOKEN environment variable.');
+      return { ok: false };
+    }
     try {
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
         method: 'POST',

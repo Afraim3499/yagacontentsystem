@@ -74,7 +74,10 @@ setInterval(checkPendingStaggeredBatches, 30 * 1000);
 setInterval(checkOverdueSLA, 5 * 60 * 1000);
 
 // Telegram Bot Credentials
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8446355677:AAGln29V9MXOifeJc5NBZT0Dn68Z8innrQw';
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error('❌ FATAL: TELEGRAM_BOT_TOKEN is not defined in environment variables!');
+}
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 // Set Telegram Bot Official Command Menu (Public Creator Commands Only)

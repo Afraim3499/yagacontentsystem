@@ -5,10 +5,10 @@
 
 const { Client } = require('ssh2');
 
-const VPS_HOST = '104.234.134.236';
-const VPS_USER = 'root';
-const VPS_PASS = 'Rizwan@34';
-const BOT_TOKEN = '8446355677:AAGln29V9MXOifeJc5NBZT0Dn68Z8innrQw';
+const VPS_HOST = process.env.VPS_HOST || '104.234.134.236';
+const VPS_USER = process.env.VPS_USER || 'root';
+const VPS_PASS = process.env.VPS_PASS || '';
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 const conn = new Client();
 

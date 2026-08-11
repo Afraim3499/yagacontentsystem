@@ -4,6 +4,8 @@
 *.env
 *.env.*
 *credentials*
+*bot*token*
+yaga partner program bot
 
 # Node modules
 node_modules/
