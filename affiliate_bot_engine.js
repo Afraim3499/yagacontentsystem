@@ -1,5 +1,5 @@
 // ====================================================================
-// YAGA CALLS PARTNER PROGRAM — DEDICATED TELEGRAM BOT ENGINE
+// YAGA CALLS PARTNER PROGRAM — DEDICATED TELEGRAM BOT ENGINE (V2.0)
 // Bot Token: 8839038800:AAHLIOgv-dTxpMsXMLjXnimGJqXL-AN4e3I
 // Runs standalone or via PM2: node affiliate_bot_engine.js
 // ====================================================================
@@ -12,6 +12,9 @@ const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const FREE_GROUP_CHAT_ID = process.env.YAGA_FREE_GROUP_CHAT_ID || '-1002360563454'; // Yaga Calls Free Group
 const DB_CONNECTION = 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = process.env.AFFILIATE_BOT_PORT || 3005;
+
+// Memory state for user wallet entry prompts
+const userStates = new Map(); // telegramId -> 'AWAITING_WALLET'
 
 // Postgres Client Helper
 async function queryDb(sql, params = []) {
@@ -79,22 +82,42 @@ async function createChatInviteLink(affiliateId, affiliateName) {
 }
 
 // Build Main Keyboard Menu
-function getMainKeyboard() {
+function getMainKeyboard(walletSet = true) {
   return {
     inline_keyboard: [
       [
         { text: '🚀 Get My Referral Link', callback_data: 'get_link' },
-        { text: '📊 My Live Stats', callback_data: 'view_stats' }
+        { text: '📊 My Live Dashboard', callback_data: 'view_stats' }
+      ],
+      [
+        { text: walletSet ? '💳 Update Payout Wallet' : '⚠️ Set Payout Wallet (Required)', callback_data: 'set_wallet' },
+        { text: '📢 Promo Kit & Content', callback_data: 'view_promokit' }
       ],
       [
         { text: '📘 Partner Handbook & Rules', callback_data: 'view_handbook' },
-        { text: '💳 Set/Update Wallet', callback_data: 'set_wallet' }
-      ],
-      [
-        { text: '💬 Contact Affiliate Manager', url: 'https://t.me/yagacalls47' }
+        { text: '💬 Support & VIP Manager', url: 'https://t.me/yagacalls47' }
       ]
     ]
   };
+}
+
+// Helper: Calculate Tier Progress Bar
+function getTierProgress(conversions, rate) {
+  if (conversions >= 25) {
+    return { tier: 'Tier 3 (VIP Institutional - 25%)', bar: '██████████ 100%', nextGoal: 'MAX TIER ACHIEVED 🎉' };
+  } else if (conversions >= 10) {
+    const needed = 25 - conversions;
+    const pct = Math.min(100, Math.floor(((conversions - 10) / 15) * 100));
+    const filled = Math.floor(pct / 10);
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}%`;
+    return { tier: 'Tier 2 (Pro Creator - 20%)', bar, nextGoal: `${needed} more sales to reach 25% VIP Tier!` };
+  } else {
+    const needed = 10 - conversions;
+    const pct = Math.min(100, Math.floor((conversions / 10) * 100));
+    const filled = Math.floor(pct / 10);
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}%`;
+    return { tier: 'Tier 1 (Standard Partner - 15%)', bar, nextGoal: `${needed} more sales to reach 20% Pro Tier!` };
+  }
 }
 
 // Handlers for Bot Updates
@@ -108,39 +131,16 @@ async function handleUpdate(update) {
     const username = msg.from.username ? `@${msg.from.username}` : 'N/A';
     const firstName = msg.from.first_name || 'Partner';
 
-    if (text.startsWith('/start')) {
-      const welcomeText = 
-`🏆 *WELCOME TO THE YAGA CALLS PARTNER PROGRAM*
-
-Earn *15% to 25% recurring commissions* on every trader you bring into our ecosystem.
-
-*Why Top Creators Choose Yaga Calls:*
-✅ *100% Performance-Based*: Zero salary burn, pure upside.
-✅ *Native Telegram Tracking*: Zero cookie drop-offs.
-✅ *Real-Time Dopamine*: Instant alert when someone joins free or buys Premium.
-✅ *Crypto Payouts*: USDT / USDC / SOL / BTC delivered weekly.
-
-Tap below to get your unique invite link and start earning today!`;
-
-      await sendMessage(chatId, welcomeText, getMainKeyboard());
-    }
-
-    else if (text.startsWith('/stats')) {
-      await showStats(chatId, telegramId);
-    }
-
-    else if (text.startsWith('/wallet')) {
-      await sendMessage(chatId, `💳 *UPDATE PAYOUT WALLET*\n\nPlease reply to this message with your *USDT/USDC/SOL/BTC Wallet Address*.\nExample: \`TR7NHqJeo42nZ115wX8TfUt2rK6f8j9XYZ\``);
-    }
-
-    else if (text.startsWith('/guide') || text.startsWith('/rules')) {
-      await showHandbook(chatId);
-    }
-
-    // Capture Wallet Address Replies
-    else if (text.length > 20 && !text.startsWith('/')) {
+    // Awaiting Wallet Address Input
+    if (userStates.get(telegramId) === 'AWAITING_WALLET' && !text.startsWith('/')) {
       const wallet = text.trim();
       const affId = `AFF_${telegramId}`;
+
+      // Basic crypto address format validation
+      if (wallet.length < 24) {
+        await sendMessage(chatId, `❌ *INVALID WALLET ADDRESS*\n\nPlease enter a valid crypto address (USDT TRC20, ERC20, SOL, or BTC).\n\nExample:\n\`TR7NHqJeo42nZ115wX8TfUt2rK6f8j9XYZ\``);
+        return;
+      }
 
       await queryDb(`
         INSERT INTO public.affiliates (id, telegram_id, telegram_handle, first_name, wallet_address, status)
@@ -149,7 +149,66 @@ Tap below to get your unique invite link and start earning today!`;
         SET wallet_address = $5, updated_at = NOW()
       `, [affId, telegramId, username, firstName, wallet]);
 
-      await sendMessage(chatId, `✅ *WALLET SAVED SUCCESSFULLY!*\n\nYour Payout Address: \`${wallet}\`\n\nCommissions will be sent directly to this address.`, getMainKeyboard());
+      userStates.delete(telegramId);
+
+      const confirmMsg = 
+`✅ *PAYOUT WALLET SAVED SUCCESSFULLY!*
+
+💳 *Registered Wallet*: \`${wallet}\`
+
+Your 15%–25% commissions will be automatically calculated and paid weekly to this address.
+
+Tap below to get your unique referral link!`;
+
+      await sendMessage(chatId, confirmMsg, getMainKeyboard(true));
+      return;
+    }
+
+    if (text.startsWith('/start')) {
+      const affId = `AFF_${telegramId}`;
+      const dbRes = await queryDb(`SELECT * FROM public.affiliates WHERE telegram_id = $1`, [telegramId]);
+      const aff = dbRes.rows[0];
+
+      const welcomeText = 
+`🏆 *WELCOME TO THE YAGA CALLS PARTNER PROGRAM*
+_Institutional Crypto Signals & Performance-Based Affiliate System_
+
+Hello *${firstName}*! Turn your crypto network, trading audience, or social channels into passive recurring income.
+
+🔥 *WHY PARTNERS SUCCEED WITH US:*
+• *15% to 25% Commission Ladder*: Earn $45 to $200+ per enrollment.
+• *Native Telegram Link Tracking*: 0% cookie drop-off. Permanent attribution.
+• *Real-Time Notifications*: Instant alerts on free joinees & sales.
+• *Weekly Crypto Settlements*: USDT / USDC / SOL / BTC delivered every Friday.
+
+---
+⚡️ *QUICK ONBOARDING STEPS:*
+1️⃣ Tap *🚀 Get My Referral Link* to generate your tracking link.
+2️⃣ Tap *💳 Set Payout Wallet* to receive weekly crypto settlements.
+3️⃣ Tap *📢 Promo Kit & Content* for ready-to-use marketing templates.`;
+
+      await sendMessage(chatId, welcomeText, getMainKeyboard(Boolean(aff?.wallet_address)));
+    }
+
+    else if (text.startsWith('/stats')) {
+      await showStats(chatId, telegramId);
+    }
+
+    else if (text.startsWith('/wallet')) {
+      userStates.set(telegramId, 'AWAITING_WALLET');
+      await sendMessage(chatId, `💳 *SET/UPDATE YOUR PAYOUT WALLET*\n\nPlease reply with your *USDT (TRC20/ERC20), SOL, or BTC* wallet address:\n\n*Example TRC20 Address:*\n\`TR7NHqJeo42nZ115wX8TfUt2rK6f8j9XYZ\``);
+    }
+
+    else if (text.startsWith('/promokit') || text.startsWith('/promo')) {
+      await showPromoKit(chatId);
+    }
+
+    else if (text.startsWith('/guide') || text.startsWith('/rules')) {
+      await showHandbook(chatId);
+    }
+
+    else if (text.startsWith('/help')) {
+      await sendMessage(chatId, `💬 *YAGA CALLS PARTNER SUPPORT*\n\nNeed custom commission rates, institutional partnerships, or payout assistance?\n\nContact our VIP Partner Manager directly: @yagacalls47`, getMainKeyboard());
     }
   }
 
@@ -165,7 +224,6 @@ Tap below to get your unique invite link and start earning today!`;
     if (data === 'get_link') {
       const affId = `AFF_${telegramId}`;
 
-      // Check if affiliate exists
       let dbRes = await queryDb(`SELECT * FROM public.affiliates WHERE telegram_id = $1`, [telegramId]);
       let affiliate = dbRes.rows[0];
 
@@ -178,25 +236,32 @@ Tap below to get your unique invite link and start earning today!`;
           SET invite_link = $5, updated_at = NOW()
         `, [affId, telegramId, username, firstName, link]);
 
-        affiliate = { invite_link: link };
+        affiliate = { invite_link: link, wallet_address: affiliate?.wallet_address };
       }
 
       const linkMsg = 
 `🚀 *YOUR UNIQUE TELEGRAM REFERRAL LINK*
 
-Here is your exclusive tracking link for the Yaga Calls Free Telegram Group:
+Here is your permanent tracking link for the Yaga Calls Free Group:
 👉 \`${affiliate.invite_link}\`
 
-*How it works:*
-1. Share this link on Twitter, Telegram, YouTube, or with your network.
-2. Anyone who joins the free group via your link is permanently tagged to you.
-3. You receive an instant alert when they join, and a *15%–25% commission alert* when they upgrade to Premium!`;
+---
+📌 *HOW ATTRIBUTION WORKS:*
+• Anyone who clicks your link and joins our free group is permanently tagged under your account.
+• You get an **instant notification** when a free member joins.
+• When they upgrade to Premium VIP, you earn **15% to 25% recurring commission**!
 
-      await sendMessage(chatId, linkMsg, getMainKeyboard());
+${!affiliate.wallet_address ? '⚠️ *REMINDER*: Tap *Set Payout Wallet* to ensure your crypto payouts are deposited smoothly!' : '✅ *Payout Wallet Configured*: `' + affiliate.wallet_address + '`'}`;
+
+      await sendMessage(chatId, linkMsg, getMainKeyboard(Boolean(affiliate.wallet_address)));
     }
 
     else if (data === 'view_stats') {
       await showStats(chatId, telegramId);
+    }
+
+    else if (data === 'view_promokit') {
+      await showPromoKit(chatId);
     }
 
     else if (data === 'view_handbook') {
@@ -204,7 +269,8 @@ Here is your exclusive tracking link for the Yaga Calls Free Telegram Group:
     }
 
     else if (data === 'set_wallet') {
-      await sendMessage(chatId, `💳 *UPDATE PAYOUT WALLET*\n\nPlease send your USDT (TRC20/ERC20) or SOL/BTC wallet address in the chat.\n\nExample:\n\`TR7NHqJeo42nZ115wX8TfUt2rK6f8j9XYZ\``);
+      userStates.set(telegramId, 'AWAITING_WALLET');
+      await sendMessage(chatId, `💳 *SET/UPDATE PAYOUT WALLET*\n\nPlease reply directly to this message with your *USDT (TRC20/ERC20), SOL, or BTC* wallet address.\n\n*Example TRC20 Address:*\n\`TR7NHqJeo42nZ115wX8TfUt2rK6f8j9XYZ\``);
     }
   }
 
@@ -215,7 +281,6 @@ Here is your exclusive tracking link for the Yaga Calls Free Telegram Group:
     const newMember = cm.new_chat_member?.user;
 
     if (inviteLink && newMember && !newMember.is_bot) {
-      // Find matching affiliate by invite_link
       const res = await queryDb(`SELECT * FROM public.affiliates WHERE invite_link = $1`, [inviteLink]);
       const aff = res.rows[0];
 
@@ -235,14 +300,14 @@ Here is your exclusive tracking link for the Yaga Calls Free Telegram Group:
         // Increment free joins counter
         await queryDb(`UPDATE public.affiliates SET total_free_joins = total_free_joins + 1 WHERE id = $1`, [aff.id]);
 
-        // Notify Affiliate in real-time
+        // Real-time Push Alert to Affiliate
         const alertMsg = 
 `🔔 *NEW FREE MEMBER JOINED VIA YOUR LINK!*
 
 👤 *User*: ${joineeFirstName} (${joineeUsername})
 📊 *Your Total Free Joinees*: ${Number(aff.total_free_joins) + 1}
 
-_When this member purchases a Premium Plan, you will receive an instant 15% commission alert!_`;
+_When this member purchases a Premium Plan, you will receive an instant 15%–25% commission alert!_`;
 
         await sendMessage(aff.telegram_id, alertMsg);
         console.log(`✅ Tracked free joinee ${joineeUsername} for affiliate ${aff.telegram_handle}`);
@@ -251,33 +316,79 @@ _When this member purchases a Premium Plan, you will receive an instant 15% comm
   }
 }
 
-// Helper: Render Live Stats
+// Helper: Render Live Stats Dashboard with Progress Bar
 async function showStats(chatId, telegramId) {
   const dbRes = await queryDb(`SELECT * FROM public.affiliates WHERE telegram_id = $1`, [telegramId]);
   const aff = dbRes.rows[0];
 
   if (!aff) {
-    await sendMessage(chatId, `⚠️ *No Affiliate Account Found*\n\nTap *Get My Referral Link* below to activate your partner profile!`, getMainKeyboard());
+    await sendMessage(chatId, `⚠️ *No Partner Account Found*\n\nTap *🚀 Get My Referral Link* below to activate your partner profile instantly!`, getMainKeyboard(false));
     return;
   }
 
+  const conversions = Number(aff.total_conversions || 0);
+  const rate = Number(aff.commission_rate || 15);
+  const tierInfo = getTierProgress(conversions, rate);
+
   const statsMsg = 
-`📊 *YOUR LIVE AFFILIATE PERFORMANCE*
+`📊 *YOUR LIVE PARTNER DASHBOARD*
 
-👤 *Partner*: ${aff.first_name} (${aff.telegram_handle})
-🎯 *Commission Tier*: *${aff.commission_rate}%*
+👤 *Partner Name*: ${aff.first_name} (${aff.telegram_handle})
+🎯 *Current Tier*: *${tierInfo.tier}*
+📈 *Tier Milestone Progress*:
+\`${tierInfo.bar}\`
+_${tierInfo.nextGoal}_
 
+---
 👥 *Total Free Joinees*: \`${aff.total_free_joins}\`
-💰 *Total Premium Conversions*: \`${aff.total_conversions}\`
+💰 *Total VIP Conversions*: \`${conversions}\`
 
 💵 *Total Earned*: \`$${Number(aff.total_earned).toFixed(2)} USDT\`
 ✅ *Total Paid Out*: \`$${Number(aff.total_paid).toFixed(2)} USDT\`
 ⏳ *Unpaid Balance*: \`$${Number(aff.unpaid_balance).toFixed(2)} USDT\`
 
-💳 *Payout Wallet*: \`${aff.wallet_address || 'Not Set (Tap Set/Update Wallet)'}\`
+---
+💳 *Payout Wallet*: \`${aff.wallet_address || '⚠️ Not Set (Tap Set Payout Wallet)'}\`
 🔗 *Your Link*: \`${aff.invite_link || 'Not Generated'}\``;
 
-  await sendMessage(chatId, statsMsg, getMainKeyboard());
+  await sendMessage(chatId, statsMsg, getMainKeyboard(Boolean(aff.wallet_address)));
+}
+
+// Helper: Render Promo Kit & Swipe Copy Templates
+async function showPromoKit(chatId) {
+  const promoMsg = 
+`📢 *YAGA CALLS PROMOTIONAL CONTENT KIT & SWIPE COPY*
+
+Use these high-converting templates across Twitter/X, Telegram channels, or Discord:
+
+---
+📲 *TEMPLATE 1: TWITTER/X POST*
+\`\`\`
+Stop trading crypto blind. 
+
+If you want narrative-driven market setups with clear entry zones, invalidation levels, and strict risk management — join the Yaga Calls Free Group.
+
+Join free here: [INSERT YOUR LINK]
+\`\`\`
+
+---
+📲 *TEMPLATE 2: TELEGRAM BROADCAST POST*
+\`\`\`
+🔥 Looking for institutional-grade crypto signals & deep narrative research?
+
+Yaga Calls provides high-probability setups with full entry, target, and stop-loss context.
+
+Join the free Telegram community before the next trade setup drops:
+👉 [INSERT YOUR LINK]
+\`\`\`
+
+---
+💡 *KEY VALUE PROPOSITIONS TO HIGHLIGHT:*
+• 85%+ verified setup accuracy with historical proof
+• Full setup breakdown: Entry, Stop-Loss, Targets & Invalidation Logic
+• Educational narrative market research (DeFi, AI, Layer 1s)`;
+
+  await sendMessage(chatId, promoMsg, getMainKeyboard(true));
 }
 
 // Helper: Render Affiliate Handbook & Transparency Rules
@@ -285,28 +396,25 @@ async function showHandbook(chatId) {
   const handbookMsg = 
 `📘 *YAGA CALLS AFFILIATE HANDBOOK & TRANSPARENCY RULES*
 
-*1. 100% Automated Tracking*
-- Every link generated by this bot is linked directly to your partner ID.
-- When someone joins the free group via your link, they are tagged to you forever.
+*1. 100% Native Telegram Attribution*
+- Every link generated by this bot is linked permanently to your Telegram partner ID.
+- Zero cookie drop-offs. When someone joins the free group via your link, they are tagged to you forever.
 
-*2. Commission Structure*
-- *Tier 1 (Standard)*: 15% on all subscriptions.
-  - Quarterly ($299) → *You earn $44.85 USDT*
-  - Half-Yearly ($499) → *You earn $74.85 USDT*
-  - Yearly ($799) → *You earn $119.85 USDT*
-- *Tier 2 (Pro Creator - 10+ sales/mo)*: 20% commission.
-- *Tier 3 (VIP Institutional - 25+ sales/mo)*: 25% commission.
+*2. Commission Tier Structure*
+- *Tier 1 (Standard)*: 15% on all subscriptions ($44.85 to $119.85 per sale).
+- *Tier 2 (Pro Creator - 10+ sales/mo)*: 20% commission ($59.80 to $159.80 per sale).
+- *Tier 3 (VIP Institutional - 25+ sales/mo)*: 25% commission ($74.75 to $199.75 per sale).
 
-*3. Ethical Promotion Rules*
+*3. Ethical Promotion Code of Conduct*
 ✅ *DO*: Share setup breakdowns, market narrative analysis, Twitter threads, YouTube reviews, and personal trade results.
 ❌ *DON'T*: Spam random groups, make fake profit guarantees, impersonate Yaga Calls staff, or create self-referral accounts.
 
-*4. Payout Policy*
-- Paid directly in USDT / USDC / SOL / BTC.
+*4. Weekly Crypto Settlements*
+- Settled in USDT (TRC20/ERC20), USDC, SOL, or BTC.
 - Minimum payout threshold: $50 USDT.
 - Issued weekly every Friday or upon request via CRM.`;
 
-  await sendMessage(chatId, handbookMsg, getMainKeyboard());
+  await sendMessage(chatId, handbookMsg, getMainKeyboard(true));
 }
 
 // Trigger Commission Alert (Called by CRM or Webhook when member upgrades)
@@ -334,7 +442,7 @@ async function triggerConversionNotification(affiliateId, joinedUsername, planNa
 💵 *Commission Earned (${aff.commission_rate}%)*: *+$${Number(commissionEarned).toFixed(2)} USDT*
 
 ⏳ *Your New Unpaid Balance*: *$${newUnpaidBalance.toFixed(2)} USDT*
-_Payout will be processed according to your wallet settings._`;
+_Payout will be processed according to your wallet settings on Friday._`;
 
       await sendMessage(aff.telegram_id, alertMsg);
       return { success: true, unpaidBalance: newUnpaidBalance };
@@ -349,9 +457,11 @@ async function registerBotCommands() {
   try {
     const commands = [
       { command: 'start', description: '⚡️ Open Partner Dashboard & Menu' },
-      { command: 'stats', description: '📊 Check My Live Earnings & Joinees' },
-      { command: 'wallet', description: '💳 Set or Update Payout Wallet' },
-      { command: 'guide', description: '📘 Read Affiliate Rules & Handbook' }
+      { command: 'stats', description: '📊 Check Live Earnings & Tier Progress' },
+      { command: 'wallet', description: '💳 Set or Update Crypto Payout Wallet' },
+      { command: 'promokit', description: '📢 Access Promotional Swipe Copy Kit' },
+      { command: 'guide', description: '📘 Read Partner Rules & Tier Handbook' },
+      { command: 'help', description: '💬 Contact VIP Partner Manager' }
     ];
     await fetch(`${API_BASE}/setMyCommands`, {
       method: 'POST',
@@ -396,21 +506,21 @@ const server = http.createServer(async (req, res) => {
 
   else if (req.url === '/api/affiliate/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine' }));
+    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine V2' }));
   }
 
   else { res.writeHead(404); res.end(); }
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Affiliate API Engine running on http://localhost:${PORT}`);
+  console.log(`🚀 Affiliate API Engine V2 running on http://localhost:${PORT}`);
 });
 
 // Telegram Long Polling Loop
 let offset = 0;
 async function pollUpdates() {
   await registerBotCommands();
-  console.log('🤖 Telegram Partner Program Bot Active! Long polling listening for updates...');
+  console.log('🤖 Telegram Partner Program Bot V2 Active! Listening for updates...');
   const allowedUpdates = JSON.stringify(["message", "callback_query", "chat_member"]);
 
   while (true) {
