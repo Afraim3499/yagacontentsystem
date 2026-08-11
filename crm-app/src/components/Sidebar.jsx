@@ -18,6 +18,7 @@ export default function Sidebar({ activeTab, setActiveTab, openIssuesCount, mobi
   const menuItems = [
     { id: 'dashboard', label: 'Command Center', icon: LayoutDashboard },
     { id: 'signals', label: 'Trade Signals Desk', icon: BarChart3, badge: 'Trade' },
+    { id: 'affiliates', label: 'Affiliate & Partner Hub', icon: Users, badge: '15%' },
     { id: 'vip', label: 'VIP Members Desk', icon: Crown, badge: 'VIP' },
     { id: 'studio', label: 'Content Studio', icon: CalendarDays, badge: '3-Batch' },
     { id: 'members', label: 'Member Intelligence', icon: Users, badge: 'Live' },
