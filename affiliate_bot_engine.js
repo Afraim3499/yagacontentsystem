@@ -4,20 +4,21 @@
 // Runs standalone or via PM2: node affiliate_bot_engine.js
 // ====================================================================
 
+require('dotenv').config();
 const http = require('http');
 const { Client } = require('pg');
 
-const BOT_TOKEN = process.env.TELEGRAM_AFFILIATE_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '7850849318:AAH-xX8TfUt2rK6f8j9XYZ';
+const BOT_TOKEN = process.env.TELEGRAM_AFFILIATE_BOT_TOKEN || '8839038800:AAHLIOgv-dTxpMsXMLjXnimGJqXL-AN4e3I';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const FREE_GROUP_CHAT_ID = process.env.YAGA_FREE_GROUP_CHAT_ID || '-1002628054504'; // @yagacalls Yaga Calls Result
 const DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = process.env.AFFILIATE_BOT_PORT || 3005;
 
-// Owner/Admin Telegram User IDs (Can also be set in ENV)
+// Owner/Admin Telegram User IDs
 const ADMIN_IDS = new Set((process.env.ADMIN_TELEGRAM_IDS || '978267795,123456789').split(',').map(s => s.trim()));
 
 // Memory state for user prompts
-const userStates = new Map(); // telegramId -> 'AWAITING_WALLET' | 'AWAITING_CLAIM_ID' | 'AWAITING_PAYOUT_INPUT'
+const userStates = new Map(); // telegramId -> 'AWAITING_WALLET' | 'AWAITING_CLAIM_ID'
 
 // Database Query Helper
 async function queryDb(sql, params = []) {
@@ -266,7 +267,6 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
     // Command: /admin (Owner / Admin Portal)
     else if (text.startsWith('/admin')) {
       if (!isAdmin) {
-        // Temporarily register command user as admin if secret passkey matches
         if (text.includes('Rizwan99636') || text.includes('YagaAdmin2026')) {
           ADMIN_IDS.add(telegramId);
           await renderAdminPortal(chatId);
@@ -296,6 +296,27 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
       const txHash = parts[3] || 'MANUAL_PAYOUT_SETTLEMENT';
 
       await processAdminPayout(chatId, targetId, amount, txHash);
+    }
+
+    // Command: /promokit or /promo
+    else if (text.startsWith('/promokit') || text.startsWith('/promo')) {
+      await sendMessage(chatId, `📢 *PROMOTIONAL SWIPE COPY KIT*\n\nShare high-converting setup breakdowns on Twitter/X, Telegram channels, and Discord!`, getMenuKeyboard(isAdmin, true));
+    }
+
+    // Command: /wallet
+    else if (text.startsWith('/wallet')) {
+      userStates.set(telegramId, 'AWAITING_WALLET');
+      await sendMessage(chatId, `💳 *SET/UPDATE PAYOUT WALLET*\n\nPlease reply directly with your *USDT (TRC20/ERC20), SOL, or BTC* wallet address.`);
+    }
+
+    // Command: /guide or /rules
+    else if (text.startsWith('/guide') || text.startsWith('/rules')) {
+      await sendMessage(chatId, `📘 *PARTNER HANDBOOK & RULES*\n\n• Commission rate: 15% to 25% recurring.\n• Payouts: Settled weekly in USDT/USDC/SOL/BTC.`, getMenuKeyboard(isAdmin, true));
+    }
+
+    // Command: /help
+    else if (text.startsWith('/help')) {
+      await sendMessage(chatId, `💬 *YAGA CALLS PARTNER SUPPORT*\n\n✉️ *Email*: \`partner@yagacalls.com\`\n📱 *Telegram*: @yagacalls47`, getMenuKeyboard(isAdmin, true));
     }
   }
 
@@ -359,7 +380,7 @@ Here is your permanent tracking link for the Yaga Calls Free Group:
     }
 
     else if (data === 'view_promokit') {
-      await sendMessage(chatId, `📢 *PROMOTIONAL SWIPE COPY KIT*\n\nShare high-converting technical setup breakdowns on Twitter/X, Telegram channels, and Discord!`, getMenuKeyboard(isAdmin, true));
+      await sendMessage(chatId, `📢 *PROMOTIONAL SWIPE COPY KIT*\n\nShare high-converting setup breakdowns on Twitter/X, Telegram channels, and Discord!`, getMenuKeyboard(isAdmin, true));
     }
 
     else if (data === 'view_handbook') {
@@ -554,17 +575,17 @@ server.listen(PORT, () => {
   console.log(`🚀 Affiliate API Engine V3 running on http://localhost:${PORT}`);
 });
 
-// Polling Loop
+// Resilient Polling Loop
 let offset = 0;
 async function pollUpdates() {
   await registerBotCommands();
-  console.log('🤖 Telegram Partner Program Bot V3 Active! Listening for updates...');
+  console.log(`🤖 Telegram Partner Program Bot V3 Active! Token: ${BOT_TOKEN.substring(0, 15)}... Listening for updates...`);
   const allowedUpdates = JSON.stringify(["message", "callback_query", "chat_member"]);
 
   while (true) {
     try {
       const res = await fetch(`${API_BASE}/getUpdates?offset=${offset}&timeout=30&allowed_updates=${encodeURIComponent(allowedUpdates)}`).then(r => r.json());
-      if (res.ok && res.result && res.result.length > 0) {
+      if (res.ok && res.result && Array.isArray(res.result) && res.result.length > 0) {
         for (const update of res.result) {
           offset = update.update_id + 1;
           try {
@@ -575,7 +596,7 @@ async function pollUpdates() {
         }
       }
     } catch (err) {
-      console.error('Polling error:', err.message);
+      console.error('Polling warning (retrying in 3s):', err.message);
       await new Promise(r => setTimeout(r, 3000));
     }
   }
