@@ -1,5 +1,5 @@
 // ====================================================================
-// YAGA CALLS PARTNER PROGRAM — DEDICATED TELEGRAM BOT ENGINE (V3.0)
+// YAGA CALLS PARTNER PROGRAM — DEDICATED TELEGRAM BOT ENGINE (V3.1)
 // Supports Partner Self-Service, Owner Admin Financial Control & Payouts
 // Runs standalone or via PM2: node affiliate_bot_engine.js
 // ====================================================================
@@ -10,7 +10,7 @@ const { Client } = require('pg');
 
 const BOT_TOKEN = process.env.TELEGRAM_AFFILIATE_BOT_TOKEN || '8839038800:AAHLIOgv-dTxpMsXMLjXnimGJqXL-AN4e3I';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
-const FREE_GROUP_CHAT_ID = process.env.YAGA_FREE_GROUP_CHAT_ID || '-1002628054504'; // @yagacalls Yaga Calls Result
+const FREE_GROUP_CHAT_ID = process.env.YAGA_FREE_GROUP_CHAT_ID || '@yagacalls'; // @yagacalls Yaga Calls Result
 const DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = process.env.AFFILIATE_BOT_PORT || 3005;
 
@@ -60,7 +60,7 @@ async function sendMessage(chatId, text, replyMarkup = null) {
   }
 }
 
-// Generate Telegram Chat Invite Link
+// Generate Real Native Telegram Chat Invite Link
 async function createChatInviteLink(affiliateId, affiliateName) {
   try {
     const res = await fetch(`${API_BASE}/createChatInviteLink`, {
@@ -68,23 +68,25 @@ async function createChatInviteLink(affiliateId, affiliateName) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: FREE_GROUP_CHAT_ID,
-        name: `AFF_${affiliateId}_${(affiliateName || 'Partner').replace(/\s+/g, '_')}`.substring(0, 32),
+        name: `PARTNER_${affiliateId}_${(affiliateName || 'Partner').replace(/\s+/g, '_')}`.substring(0, 32),
         creates_join_request: false
       })
     }).then(r => r.json());
 
     if (res.ok && res.result && res.result.invite_link) {
-      return res.result.invite_link;
+      console.log(`✅ Generated unique link for ${affiliateName}: ${res.result.invite_link}`);
+      return { success: true, invite_link: res.result.invite_link };
     } else {
-      return `https://t.me/+yaga_ref_${affiliateId}`;
+      console.error('❌ createChatInviteLink Telegram API error:', res.description);
+      return { success: false, error: res.description || 'Bot admin permission required in @yagacalls' };
     }
   } catch (err) {
     console.error('Failed to create invite link:', err.message);
-    return `https://t.me/+yaga_ref_${affiliateId}`;
+    return { success: false, error: err.message };
   }
 }
 
-// Partner Profile Lookup Helper (Queries both public.associates and public.affiliates)
+// Partner Profile Lookup Helper
 async function getPartnerProfile(telegramId, telegramHandle = '') {
   // 1. Check public.associates
   const ascRes = await queryDb(`
@@ -342,21 +344,60 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
     else if (data === 'get_link') {
       let profile = await getPartnerProfile(telegramId, username);
 
-      if (!profile) {
-        const link = await createChatInviteLink(telegramId, firstName);
+      if (profile && profile.invite_link && !profile.invite_link.includes('yaga_ref_')) {
+        // Return existing validated link
+        const linkText = 
+`🚀 *YOUR UNIQUE TELEGRAM REFERRAL LINK*
+
+Here is your permanent tracking link for the Yaga Calls Free Group:
+👉 \`${profile.invite_link}\`
+
+---
+📌 *HOW IT WORKS:*
+• Members joining via your link are permanently tagged to your partner account.
+• You get real-time notifications on free joins and VIP upgrades!`;
+
+        await sendMessage(chatId, linkText, getMenuKeyboard(isAdmin, true));
+        return;
+      }
+
+      // Generate new native Telegram Chat Invite Link
+      const linkResult = await createChatInviteLink(telegramId, firstName);
+
+      if (!linkResult.success) {
+        const errorText = 
+`⚠️ *CHANNEL ADMIN PERMISSION REQUIRED*
+
+Telegram API Error: \`${linkResult.error}\`
+
+📌 *TO RESOLVE THIS:*
+Please add *@yaga_partner_program_bot* as an **Administrator** in your channel **@yagacalls** (\`Yaga Calls Result\`) with permission:
+✅ *Invite Users via Link* (\`can_invite_users\`)
+
+Once added as Admin, tap *🚀 Get My Referral Link* again to generate your unique link!`;
+
+        await sendMessage(chatId, errorText, getMenuKeyboard(isAdmin, false));
+        return;
+      }
+
+      const link = linkResult.invite_link;
+
+      // Save valid link to database
+      if (profile && profile.type === 'ASSOCIATE') {
+        await queryDb(`UPDATE public.associates SET unique_invite_link = $1 WHERE id = $2`, [link, profile.id]);
+      } else {
         await queryDb(`
           INSERT INTO public.affiliates (id, telegram_id, telegram_handle, first_name, invite_link, status)
           VALUES ($1, $2, $3, $4, $5, 'Active')
           ON CONFLICT (telegram_id) DO UPDATE SET invite_link = $5, updated_at = NOW()
         `, [`AFF_${telegramId}`, telegramId, username, firstName, link]);
-        profile = { invite_link: link };
       }
 
       const linkText = 
 `🚀 *YOUR UNIQUE TELEGRAM REFERRAL LINK*
 
 Here is your permanent tracking link for the Yaga Calls Free Group:
-👉 \`${profile.invite_link}\`
+👉 \`${link}\`
 
 ---
 📌 *HOW IT WORKS:*
@@ -565,21 +606,21 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === '/api/affiliate/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine V3' }));
+    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine V3.1' }));
   } else {
     res.writeHead(404); res.end();
   }
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Affiliate API Engine V3 running on http://localhost:${PORT}`);
+  console.log(`🚀 Affiliate API Engine V3.1 running on http://localhost:${PORT}`);
 });
 
 // Resilient Polling Loop
 let offset = 0;
 async function pollUpdates() {
   await registerBotCommands();
-  console.log(`🤖 Telegram Partner Program Bot V3 Active! Token: ${BOT_TOKEN.substring(0, 15)}... Listening for updates...`);
+  console.log(`🤖 Telegram Partner Program Bot V3.1 Active! Token: ${BOT_TOKEN.substring(0, 15)}... Listening for updates...`);
   const allowedUpdates = JSON.stringify(["message", "callback_query", "chat_member"]);
 
   while (true) {
