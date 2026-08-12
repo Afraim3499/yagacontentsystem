@@ -607,9 +607,24 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/affiliate/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine V3.1' }));
+  } else if (req.url === '/api/affiliate/payout' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        await processAdminPayout(null, payload.affiliateId, Number(payload.amount), payload.txHash || 'CRM_PAYOUT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
   } else {
     res.writeHead(404); res.end();
   }
+
 });
 
 server.listen(PORT, () => {

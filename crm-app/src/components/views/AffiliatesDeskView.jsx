@@ -93,17 +93,16 @@ export default function AffiliatesDeskView() {
     const newUnpaid = Math.max(0, currentUnpaid - payAmount);
 
     try {
-      // Update Supabase
-      const { error } = await supabase
-        .from('affiliates')
-        .update({
+      // Update Supabase (associates or affiliates)
+      if (selectedAffiliate.id.startsWith('ASC-')) {
+        await supabase.from('associates').update({ total_paid: newPaid }).eq('id', selectedAffiliate.id);
+      } else {
+        await supabase.from('affiliates').update({
           total_paid: newPaid,
           unpaid_balance: newUnpaid,
           updated_at: new Date().toISOString()
-        })
-        .eq('id', selectedAffiliate.id);
-
-      if (error) throw error;
+        }).eq('id', selectedAffiliate.id);
+      }
 
       // Update Referral Payout Statuses
       await supabase
@@ -116,7 +115,22 @@ export default function AffiliatesDeskView() {
         .eq('affiliate_id', selectedAffiliate.id)
         .eq('payout_status', 'UNPAID');
 
-      showToast(`✅ Payout of $${payAmount} ${payoutForm.currency} processed for ${selectedAffiliate.telegram_handle}!`);
+      // Trigger Telegram Bot Payout Alert
+      try {
+        await fetch('http://localhost:3005/api/affiliate/payout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            affiliateId: selectedAffiliate.id,
+            amount: payAmount,
+            txHash: payoutForm.txHash
+          })
+        });
+      } catch (botErr) {
+        console.warn('Bot payout alert fallback:', botErr.message);
+      }
+
+      showToast(`✅ Payout of $${payAmount} ${payoutForm.currency} processed for ${selectedAffiliate.name || selectedAffiliate.telegram_handle}!`);
 
       setPayoutModalOpen(false);
       setPayoutForm({ amount: '', currency: 'USDT', txHash: '', notes: '' });
@@ -126,6 +140,7 @@ export default function AffiliatesDeskView() {
       showToast(`❌ Error processing payout: ${err.message}`);
     }
   };
+
 
   // Handle Manual Conversion Recording
   const handleLogConversion = async (e) => {
