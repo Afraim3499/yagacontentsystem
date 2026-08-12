@@ -1,6 +1,6 @@
 // ====================================================================
-// YAGA CALLS PARTNER PROGRAM — DEDICATED TELEGRAM BOT ENGINE (V3.1)
-// Supports Partner Self-Service, Owner Admin Financial Control & Payouts
+// YAGA CALLS PARTNER PROGRAM — DEDICATED TELEGRAM BOT ENGINE (V3.2)
+// Supports Partner Self-Service, Owner Admin Control & Timestamped Payout Logs
 // Runs standalone or via PM2: node affiliate_bot_engine.js
 // ====================================================================
 
@@ -10,7 +10,7 @@ const { Client } = require('pg');
 
 const BOT_TOKEN = process.env.TELEGRAM_AFFILIATE_BOT_TOKEN || '8839038800:AAHLIOgv-dTxpMsXMLjXnimGJqXL-AN4e3I';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
-const FREE_GROUP_CHAT_ID = process.env.YAGA_FREE_GROUP_CHAT_ID || '@yagacalls'; // @yagacalls Yaga Calls Result
+const FREE_GROUP_CHAT_ID = process.env.YAGA_FREE_GROUP_CHAT_ID || '@yagacalls';
 const DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = process.env.AFFILIATE_BOT_PORT || 3005;
 
@@ -74,83 +74,39 @@ async function createChatInviteLink(affiliateId, affiliateName) {
     }).then(r => r.json());
 
     if (res.ok && res.result && res.result.invite_link) {
-      console.log(`✅ Generated unique link for ${affiliateName}: ${res.result.invite_link}`);
       return { success: true, invite_link: res.result.invite_link };
     } else {
-      console.error('❌ createChatInviteLink Telegram API error:', res.description);
       return { success: false, error: res.description || 'Bot admin permission required in @yagacalls' };
     }
   } catch (err) {
-    console.error('Failed to create invite link:', err.message);
     return { success: false, error: err.message };
   }
 }
 
-// Partner Profile Lookup Helper
+// Partner Profile Lookup Helper (Queries public.all_partners_view)
 async function getPartnerProfile(telegramId, telegramHandle = '') {
-  // 1. Check public.associates
-  const ascRes = await queryDb(`
-    SELECT * FROM public.associates 
-    WHERE telegram_chat_id = $1 OR id = $1
-  `, [telegramId]);
+  // Check unified view
+  const res = await queryDb(`
+    SELECT * FROM public.all_partners_view 
+    WHERE id = $1 OR telegram_handle = $1 OR telegram_handle = $2
+  `, [telegramId, telegramHandle]);
 
-  if (ascRes.rows.length > 0) {
-    const asc = ascRes.rows[0];
-    const statsRes = await queryDb(`
-      SELECT 
-        COUNT(CASE WHEN member_tier = 'FREE_ONLY' OR member_tier IS NULL THEN 1 END) as free_joins,
-        COUNT(CASE WHEN member_tier = 'PAID_VIP' THEN 1 END) as vip_conversions,
-        COALESCE(SUM(paid_subscription_value), 0) as vip_revenue,
-        COALESCE(SUM(free_commission), 0) as free_comm,
-        COALESCE(SUM(paid_commission), 0) as paid_comm,
-        COALESCE(SUM(free_commission + paid_commission), 0) as total_earned
-      FROM public.community_members_log
-      WHERE associate_id = $1 OR associate_name = $2
-    `, [asc.id, asc.name]);
-
-    const s = statsRes.rows[0];
-    const totalEarned = Number(s.total_earned || 0);
-    const totalPaid = Number(asc.total_paid || 0);
-    const unpaidBalance = Math.max(0, totalEarned - totalPaid);
-
+  if (res.rows.length > 0) {
+    const p = res.rows[0];
     return {
-      type: 'ASSOCIATE',
-      id: asc.id,
-      name: asc.name,
-      telegram_id: asc.telegram_chat_id || telegramId,
-      invite_link: asc.unique_invite_link,
-      free_joins: Number(s.free_joins || 0),
-      vip_conversions: Number(s.vip_conversions || 0),
-      vip_revenue: Number(s.vip_revenue || 0),
-      total_earned: totalEarned,
-      total_paid: totalPaid,
-      unpaid_balance: unpaidBalance,
-      rate_pct: Number(asc.paid_commission_pct || 5.0)
-    };
-  }
-
-  // 2. Check public.affiliates
-  const affRes = await queryDb(`SELECT * FROM public.affiliates WHERE telegram_id = $1`, [telegramId]);
-  if (affRes.rows.length > 0) {
-    const aff = affRes.rows[0];
-    const totalEarned = Number(aff.total_earned || 0);
-    const totalPaid = Number(aff.total_paid || 0);
-    const unpaidBalance = Number(aff.unpaid_balance || Math.max(0, totalEarned - totalPaid));
-
-    return {
-      type: 'AFFILIATE',
-      id: aff.id,
-      name: aff.first_name || aff.telegram_handle,
-      telegram_id: aff.telegram_id,
-      invite_link: aff.invite_link,
-      wallet_address: aff.wallet_address,
-      free_joins: Number(aff.total_free_joins || 0),
-      vip_conversions: Number(aff.total_conversions || 0),
-      vip_revenue: Number(aff.total_conversions || 0) * 200,
-      total_earned: totalEarned,
-      total_paid: totalPaid,
-      unpaid_balance: unpaidBalance,
-      rate_pct: Number(aff.commission_rate || 15.0)
+      type: p.partner_type,
+      id: p.id,
+      name: p.name,
+      telegram_id: p.telegram_handle || telegramId,
+      invite_link: p.invite_link,
+      wallet_address: p.wallet_address,
+      free_joins: Number(p.total_free_joins || 0),
+      vip_conversions: Number(p.total_conversions || 0),
+      vip_revenue: Number(p.total_conversions || 0) * 200,
+      total_earned: Number(p.total_earned || 0),
+      total_paid: Number(p.total_paid || 0),
+      unpaid_balance: Number(p.unpaid_balance || 0),
+      rate_pct: Number(p.commission_rate || 15.0)
     };
   }
 
@@ -164,7 +120,11 @@ function getMenuKeyboard(isAdmin = false, hasProfile = true) {
   if (hasProfile) {
     buttons.push([
       { text: '📊 My Live Dashboard', callback_data: 'view_stats' },
-      { text: '🚀 My Referral Link', callback_data: 'get_link' }
+      { text: '📜 Payout History', callback_data: 'view_payouts' }
+    ]);
+    buttons.push([
+      { text: '🚀 My Referral Link', callback_data: 'get_link' },
+      { text: '💳 Set Payout Wallet', callback_data: 'set_wallet' }
     ]);
   } else {
     buttons.push([
@@ -174,8 +134,8 @@ function getMenuKeyboard(isAdmin = false, hasProfile = true) {
   }
 
   buttons.push([
-    { text: '💳 Set Payout Wallet', callback_data: 'set_wallet' },
-    { text: '📢 Promo Content Kit', callback_data: 'view_promokit' }
+    { text: '📢 Promo Content Kit', callback_data: 'view_promokit' },
+    { text: '📘 Partner Handbook', callback_data: 'view_handbook' }
   ]);
 
   if (isAdmin) {
@@ -185,7 +145,6 @@ function getMenuKeyboard(isAdmin = false, hasProfile = true) {
   }
 
   buttons.push([
-    { text: '📘 Partner Handbook & Rules', callback_data: 'view_handbook' },
     { text: '💬 Support & VIP Manager', url: 'https://t.me/yagacalls47' }
   ]);
 
@@ -255,6 +214,7 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
 
 🔥 *PARTNER DASHBOARD FEATURES:*
 • *Real-Time Earnings Tracking*: Instant accounting for joins, VIP sales, and earnings.
+• *Timestamped Payout History*: Full record of dates, times, amounts, and TxHashes.
 • *Automatic Native Telegram Attribution*: 0% cookie drop-off.
 • *Weekly Crypto Settlements*: USDT / USDC / SOL / BTC delivered every Friday.`;
 
@@ -264,6 +224,11 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
     // Command: /stats or /balance
     else if (text.startsWith('/stats') || text.startsWith('/balance')) {
       await renderPartnerDashboard(chatId, telegramId, username, isAdmin);
+    }
+
+    // Command: /payouts or /history
+    else if (text.startsWith('/payouts') || text.startsWith('/history')) {
+      await renderPayoutHistory(chatId, telegramId, username, isAdmin);
     }
 
     // Command: /admin (Owner / Admin Portal)
@@ -311,11 +276,6 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
       await sendMessage(chatId, `💳 *SET/UPDATE PAYOUT WALLET*\n\nPlease reply directly with your *USDT (TRC20/ERC20), SOL, or BTC* wallet address.`);
     }
 
-    // Command: /guide or /rules
-    else if (text.startsWith('/guide') || text.startsWith('/rules')) {
-      await sendMessage(chatId, `📘 *PARTNER HANDBOOK & RULES*\n\n• Commission rate: 15% to 25% recurring.\n• Payouts: Settled weekly in USDT/USDC/SOL/BTC.`, getMenuKeyboard(isAdmin, true));
-    }
-
     // Command: /help
     else if (text.startsWith('/help')) {
       await sendMessage(chatId, `💬 *YAGA CALLS PARTNER SUPPORT*\n\n✉️ *Email*: \`partner@yagacalls.com\`\n📱 *Telegram*: @yagacalls47`, getMenuKeyboard(isAdmin, true));
@@ -336,6 +296,10 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
       await renderPartnerDashboard(chatId, telegramId, username, isAdmin);
     }
 
+    else if (data === 'view_payouts') {
+      await renderPayoutHistory(chatId, telegramId, username, isAdmin);
+    }
+
     else if (data === 'claim_profile') {
       userStates.set(telegramId, 'AWAITING_CLAIM_ID');
       await sendMessage(chatId, `🔑 *CLAIM EXISTING PARTNER PROFILE*\n\nPlease reply directly with your *Associate ID* (e.g., \`ASC-721939\` for Samir, \`ASC-837341\` for Faisal, etc.):`);
@@ -345,7 +309,6 @@ ${profile ? `✅ *Connected Profile*: *${profile.name}* (\`${profile.id}\`)` : '
       let profile = await getPartnerProfile(telegramId, username);
 
       if (profile && profile.invite_link && !profile.invite_link.includes('yaga_ref_')) {
-        // Return existing validated link
         const linkText = 
 `🚀 *YOUR UNIQUE TELEGRAM REFERRAL LINK*
 
@@ -361,7 +324,6 @@ Here is your permanent tracking link for the Yaga Calls Free Group:
         return;
       }
 
-      // Generate new native Telegram Chat Invite Link
       const linkResult = await createChatInviteLink(telegramId, firstName);
 
       if (!linkResult.success) {
@@ -382,7 +344,6 @@ Once added as Admin, tap *🚀 Get My Referral Link* again to generate your uniq
 
       const link = linkResult.invite_link;
 
-      // Save valid link to database
       if (profile && profile.type === 'ASSOCIATE') {
         await queryDb(`UPDATE public.associates SET unique_invite_link = $1 WHERE id = $2`, [link, profile.id]);
       } else {
@@ -445,13 +406,13 @@ Here is your permanent tracking link for the Yaga Calls Free Group:
         const joineeFirstName = newMember.first_name || 'Member';
 
         await queryDb(`
-          INSERT INTO public.affiliate_referrals (id, affiliate_id, joined_telegram_id, joined_username, joined_first_name, status)
-          VALUES ($1, $2, $3, $4, $5, 'FREE_MEMBER') ON CONFLICT DO NOTHING
+          INSERT INTO public.affiliate_referrals (id, affiliate_id, joined_telegram_id, joined_username, joined_first_name, status, earned_commission)
+          VALUES ($1, $2, $3, $4, $5, 'FREE_MEMBER', 0.00) ON CONFLICT DO NOTHING
         `, [`REF-${Date.now()}-${joineeId}`, aff.id, joineeId, joineeUsername, joineeFirstName]);
 
         await queryDb(`UPDATE public.affiliates SET total_free_joins = total_free_joins + 1 WHERE id = $1`, [aff.id]);
 
-        await sendMessage(aff.telegram_id, `🔔 *NEW FREE MEMBER JOINED VIA YOUR LINK!*\n\n👤 *Member*: ${joineeFirstName} (${joineeUsername})\n📊 *Total Free Joinees*: ${Number(aff.total_free_joins) + 1}`);
+        await sendMessage(aff.telegram_id, `🔔 *NEW FREE MEMBER JOINED VIA YOUR LINK!*\n\n👤 *Member*: ${joineeFirstName} (${joineeUsername})\n📊 *Total Free Joinees*: ${Number(aff.total_free_joins) + 1}\n\n_When this member upgrades to VIP, you earn 15%–25% commission!_`);
       }
     }
   }
@@ -489,44 +450,69 @@ async function renderPartnerDashboard(chatId, telegramId, username, isAdmin) {
   await sendMessage(chatId, text, getMenuKeyboard(isAdmin, true));
 }
 
+// Render Timestamped Payout History
+async function renderPayoutHistory(chatId, telegramId, username, isAdmin) {
+  const profile = await getPartnerProfile(telegramId, username);
+
+  let logs = [];
+  if (isAdmin) {
+    const res = await queryDb(`SELECT * FROM public.payout_logs ORDER BY created_at DESC LIMIT 15`);
+    logs = res.rows;
+  } else if (profile) {
+    const res = await queryDb(`SELECT * FROM public.payout_logs WHERE partner_id = $1 OR partner_name = $2 ORDER BY created_at DESC LIMIT 10`, [profile.id, profile.name]);
+    logs = res.rows;
+  }
+
+  if (logs.length === 0) {
+    await sendMessage(chatId, `📜 *PAYOUT TRANSACTION HISTORY*\n\nNo recorded payout transactions found yet.`, getMenuKeyboard(isAdmin, Boolean(profile)));
+    return;
+  }
+
+  let text = `📜 *TIMESTAMPED PAYOUT TRANSACTION LOGS*\n\n`;
+
+  logs.forEach((p, idx) => {
+    const dateStr = new Date(p.created_at).toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+    text += `*#${idx + 1} | $${Number(p.amount).toFixed(2)} ${p.currency}*\n`;
+    text += `  👤 Partner: ${p.partner_name} (\`${p.partner_id}\`)\n`;
+    text += `  📅 Date & Time: \`${dateStr}\`\n`;
+    text += `  🔗 TxHash: \`${p.tx_hash}\`\n\n`;
+  });
+
+  await sendMessage(chatId, text, getMenuKeyboard(isAdmin, Boolean(profile)));
+}
+
 // Render Admin Master Financial Portal
 async function renderAdminPortal(chatId) {
   const totalDbRes = await queryDb(`SELECT COUNT(*) FROM public.community_members_log`);
-  const ledgerRes = await queryDb(`
-    SELECT 
-      associate_name,
-      associate_id,
-      COUNT(CASE WHEN member_tier = 'FREE_ONLY' OR member_tier IS NULL THEN 1 END) as free_members,
-      COUNT(CASE WHEN member_tier = 'PAID_VIP' THEN 1 END) as vip_conversions,
-      COALESCE(SUM(paid_subscription_value), 0) as total_vip_revenue,
-      COALESCE(SUM(free_commission + paid_commission), 0) as total_earned
-    FROM public.community_members_log
-    WHERE associate_name IS NOT NULL
-    GROUP BY associate_name, associate_id
-    ORDER BY total_earned DESC
-  `);
+  const ledgerRes = await queryDb(`SELECT * FROM public.all_partners_view LIMIT 15`);
 
   let masterText = `👑 *PROGRAM OWNER & ADMIN FINANCIAL CONTROL PORTAL*\n\n`;
   masterText += `🌐 *Total CRM Roster*: \`${totalDbRes.rows[0].count} Members\`\n\n`;
-  masterText += `=== 💰 *PARTNER LEDGER OVERVIEW* ===\n\n`;
+  masterText += `=== 💰 *MASTER PARTNER UNPAID LEDGER* ===\n\n`;
 
   let totalRevenueSum = 0;
   let totalCommissionsSum = 0;
+  let totalUnpaidSum = 0;
 
   ledgerRes.rows.forEach(r => {
     const earned = Number(r.total_earned);
-    const rev = Number(r.total_vip_revenue);
+    const paid = Number(r.total_paid);
+    const unpaid = Number(r.unpaid_balance);
+    const rev = Number(r.total_conversions) * 200;
+
     totalRevenueSum += rev;
     totalCommissionsSum += earned;
+    totalUnpaidSum += unpaid;
 
-    masterText += `👤 *${r.associate_name}* (\`${r.associate_id || 'N/A'}\`)\n`;
-    masterText += `  └ Free: ${r.free_members} | VIPs: ${r.vip_conversions} ($${rev})\n`;
-    masterText += `  └ Total Earned: *$${earned.toFixed(2)} USDT*\n\n`;
+    masterText += `👤 *${r.name}* (\`${r.id}\`)\n`;
+    masterText += `  └ Free: ${r.total_free_joins} | VIPs: ${r.total_conversions} ($${rev})\n`;
+    masterText += `  └ Earned: $${earned.toFixed(2)} | Paid: $${paid.toFixed(2)} | *Due: $${unpaid.toFixed(2)}*\n\n`;
   });
 
   masterText += `---
 💎 *Gross VIP Revenue*: \`$${totalRevenueSum.toFixed(2)} USDT\`
 💵 *Total Partner Commissions*: \`$${totalCommissionsSum.toFixed(2)} USDT\`
+⏳ *Total Pending Unpaid Balance*: \`$${totalUnpaidSum.toFixed(2)} USDT\`
 
 💡 *To log a payment execution, use command:*
 \`/pay <ASSOCIATE_ID> <AMOUNT> [TX_HASH]\``;
@@ -536,42 +522,65 @@ async function renderAdminPortal(chatId) {
 
 // Process Admin Payout Log & Notify Partner
 async function processAdminPayout(chatId, targetId, amount, txHash) {
-  const ascRes = await queryDb(`SELECT * FROM public.associates WHERE id = $1 OR UPPER(name) = $1`, [targetId]);
+  const res = await queryDb(`
+    SELECT * FROM public.all_partners_view 
+    WHERE UPPER(id) = UPPER($1) OR UPPER(name) = UPPER($1) OR UPPER(telegram_handle) = UPPER($1)
+  `, [targetId]);
 
-  if (ascRes.rows.length === 0) {
-    await sendMessage(chatId, `❌ Could not find associate matching \`${targetId}\`.`);
+  if (res.rows.length === 0) {
+    if (chatId) await sendMessage(chatId, `❌ Could not find partner matching \`${targetId}\`.`);
     return;
   }
 
-  const asc = ascRes.rows[0];
-  const currentPaid = Number(asc.total_paid || 0);
+  const p = res.rows[0];
+  const currentPaid = Number(p.total_paid || 0);
   const newPaid = currentPaid + amount;
 
-  await queryDb(`UPDATE public.associates SET total_paid = $1 WHERE id = $2`, [newPaid, asc.id]);
+  // 1. Update Database Table
+  if (p.partner_type === 'ASSOCIATE') {
+    await queryDb(`UPDATE public.associates SET total_paid = $1 WHERE id = $2`, [newPaid, p.id]);
+  } else {
+    const currentUnpaid = Number(p.unpaid_balance || 0);
+    const newUnpaid = Math.max(0, currentUnpaid - amount);
+    await queryDb(`UPDATE public.affiliates SET total_paid = $1, unpaid_balance = $2, updated_at = NOW() WHERE id = $3`, [newPaid, newUnpaid, p.id]);
+  }
 
-  const confirmMsg = 
+  // 2. Insert Immutable Payout Log with Date & Time Timestamp
+  const payId = `PAY-${Date.now()}`;
+  await queryDb(`
+    INSERT INTO public.payout_logs (id, partner_id, partner_name, partner_type, amount, currency, tx_hash, notes, created_at)
+    VALUES ($1, $2, $3, $4, $5, 'USDT', $6, 'Admin Execution', NOW())
+  `, [payId, p.id, p.name, p.partner_type, amount, txHash]);
+
+  const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 16) + ' UTC';
+
+  if (chatId) {
+    const confirmMsg = 
 `✅ *PAYMENT LOGGED SUCCESSFULLY!*
 
-👤 *Partner*: *${asc.name}* (\`${asc.id}\`)
+👤 *Partner*: *${p.name}* (\`${p.id}\`)
 💵 *Amount Paid*: \`$${amount.toFixed(2)} USDT\`
+📅 *Date & Time*: \`${dateStr}\`
 🔗 *TxHash*: \`${txHash}\`
 💰 *Total Cumulative Paid*: \`$${newPaid.toFixed(2)} USDT\``;
 
-  await sendMessage(chatId, confirmMsg);
+    await sendMessage(chatId, confirmMsg);
+  }
 
-  // Send Instant Telegram Notification to Partner if Telegram ID linked!
-  if (asc.telegram_chat_id) {
+  // 3. Send Instant Telegram Notification to Partner
+  if (p.telegram_handle && p.telegram_handle !== 'N/A') {
     const notifyMsg = 
 `🎉 *PAYMENT DEPOSITED TO YOUR WALLET!*
 
-Hello *${asc.name}*! A payout has been executed and deposited for your partner account:
+Hello *${p.name}*! A payout has been executed and deposited for your partner account:
 
 💵 *Amount Paid*: *$${amount.toFixed(2)} USDT*
+📅 *Date & Time*: \`${dateStr}\`
 🔗 *TxHash*: \`${txHash}\`
 
 Thank you for being a valued Yaga Calls Partner!`;
 
-    await sendMessage(asc.telegram_chat_id, notifyMsg);
+    await sendMessage(p.telegram_handle, notifyMsg);
   }
 }
 
@@ -580,7 +589,8 @@ async function registerBotCommands() {
   try {
     const commands = [
       { command: 'start', description: '⚡️ Open Partner Dashboard & Menu' },
-      { command: 'stats', description: '📊 View My Live Earnings & Unpaid Balance' },
+      { command: 'stats', description: '📊 View Live Financial Dashboard' },
+      { command: 'payouts', description: '📜 View Timestamped Payout History' },
       { command: 'wallet', description: '💳 Set Payout Wallet Address' },
       { command: 'admin', description: '👑 Admin Financial Control Portal' },
       { command: 'help', description: '💬 Contact VIP Support' }
@@ -606,7 +616,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.url === '/api/affiliate/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine V3.1' }));
+    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_partner_program_bot', engine: 'Yaga Affiliate Engine V3.2' }));
   } else if (req.url === '/api/affiliate/payout' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk.toString(); });
@@ -624,18 +634,17 @@ const server = http.createServer(async (req, res) => {
   } else {
     res.writeHead(404); res.end();
   }
-
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Affiliate API Engine V3.1 running on http://localhost:${PORT}`);
+  console.log(`🚀 Affiliate API Engine V3.2 running on http://localhost:${PORT}`);
 });
 
 // Resilient Polling Loop
 let offset = 0;
 async function pollUpdates() {
   await registerBotCommands();
-  console.log(`🤖 Telegram Partner Program Bot V3.1 Active! Token: ${BOT_TOKEN.substring(0, 15)}... Listening for updates...`);
+  console.log(`🤖 Telegram Partner Program Bot V3.2 Active! Token: ${BOT_TOKEN.substring(0, 15)}... Listening for updates...`);
   const allowedUpdates = JSON.stringify(["message", "callback_query", "chat_member"]);
 
   while (true) {

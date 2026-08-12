@@ -3,28 +3,21 @@ import { supabase } from '../../lib/supabase';
 
 export default function AffiliatesDeskView() {
   const [affiliates, setAffiliates] = useState([]);
+  const [payoutLogs, setPayoutLogs] = useState([]);
   const [referrals, setReferrals] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [activeTab, setActiveTab] = useState('ROSTER'); // 'ROSTER' | 'PAYOUT_LOGS'
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [toastMessage, setToastMessage] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'ACTIVE' | 'UNPAID'
 
-  // Modals state
+  // Modal States
   const [payoutModalOpen, setPayoutModalOpen] = useState(false);
-  const [conversionModalOpen, setConversionModalOpen] = useState(false);
   const [selectedAffiliate, setSelectedAffiliate] = useState(null);
+  const [payoutForm, setPayoutForm] = useState({ amount: '', currency: 'USDT', txHash: '', notes: '' });
 
-  // Payout Form State
-  const [payoutForm, setPayoutForm] = useState({
-    amount: '',
-    currency: 'USDT',
-    txHash: '',
-    notes: ''
-  });
-
-  // Conversion Form State
+  const [conversionModalOpen, setConversionModalOpen] = useState(false);
   const [conversionForm, setConversionForm] = useState({
     affiliateId: '',
     joinedUsername: '',
@@ -33,9 +26,11 @@ export default function AffiliatesDeskView() {
     commissionRate: 15
   });
 
+  const [toast, setToast] = useState({ show: false, message: '' });
+
   const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+    setToast({ show: true, message: msg });
+    setTimeout(() => setToast({ show: false, message: '' }), 4000);
   };
 
   useEffect(() => {
@@ -45,8 +40,18 @@ export default function AffiliatesDeskView() {
   async function fetchAffiliateData() {
     setLoading(true);
     try {
-      const { data: affData, error: affErr } = await supabase.from('affiliates').select('*').order('created_at', { ascending: false });
-      
+      // Query unified view (associates + affiliates)
+      const { data: affData, error: affErr } = await supabase
+        .from('all_partners_view')
+        .select('*')
+        .order('total_earned', { ascending: false });
+
+      // Query immutable payout logs
+      const { data: logsData } = await supabase
+        .from('payout_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
+
       let allRefs = [];
       let page = 0;
       const pageSize = 1000;
@@ -62,11 +67,12 @@ export default function AffiliatesDeskView() {
         page++;
       }
 
-      if (affErr) console.error('Error fetching affiliates:', affErr);
+      if (affErr) console.error('Error fetching partners:', affErr);
 
       const { data: lbData } = await supabase.from('affiliate_leaderboard_view').select('*').limit(5);
 
       setAffiliates(affData || []);
+      setPayoutLogs(logsData || []);
       setReferrals(allRefs);
       setLeaderboard(lbData || []);
 
@@ -75,7 +81,6 @@ export default function AffiliatesDeskView() {
     }
     setLoading(false);
   }
-
 
   // Handle Process Payout Submission
   const handleProcessPayout = async (e) => {
@@ -93,8 +98,8 @@ export default function AffiliatesDeskView() {
     const newUnpaid = Math.max(0, currentUnpaid - payAmount);
 
     try {
-      // Update Supabase (associates or affiliates)
-      if (selectedAffiliate.id.startsWith('ASC-')) {
+      // 1. Update Supabase table (associates or affiliates)
+      if (selectedAffiliate.partner_type === 'ASSOCIATE' || selectedAffiliate.id.startsWith('ASC-')) {
         await supabase.from('associates').update({ total_paid: newPaid }).eq('id', selectedAffiliate.id);
       } else {
         await supabase.from('affiliates').update({
@@ -104,18 +109,21 @@ export default function AffiliatesDeskView() {
         }).eq('id', selectedAffiliate.id);
       }
 
-      // Update Referral Payout Statuses
-      await supabase
-        .from('affiliate_referrals')
-        .update({
-          payout_status: 'PAID',
-          payout_txhash: payoutForm.txHash,
-          paid_at: new Date().toISOString()
-        })
-        .eq('affiliate_id', selectedAffiliate.id)
-        .eq('payout_status', 'UNPAID');
+      // 2. Insert Immutable Payout Log Entry with Date & Time
+      const payId = `PAY-${Date.now()}`;
+      await supabase.from('payout_logs').insert([{
+        id: payId,
+        partner_id: selectedAffiliate.id,
+        partner_name: selectedAffiliate.name || selectedAffiliate.first_name,
+        partner_type: selectedAffiliate.partner_type || 'AFFILIATE',
+        amount: payAmount,
+        currency: payoutForm.currency,
+        tx_hash: payoutForm.txHash,
+        notes: payoutForm.notes || 'CRM Admin Execution',
+        created_at: new Date().toISOString()
+      }]);
 
-      // Trigger Telegram Bot Payout Alert
+      // 3. Trigger Telegram Bot Alert via API
       try {
         await fetch('http://localhost:3005/api/affiliate/payout', {
           method: 'POST',
@@ -141,39 +149,25 @@ export default function AffiliatesDeskView() {
     }
   };
 
-
   // Handle Manual Conversion Recording
   const handleLogConversion = async (e) => {
     e.preventDefault();
-    const aff = affiliates.find(a => a.id === conversionForm.affiliateId);
-    if (!aff) {
-      showToast('⚠️ Please select an affiliate partner.');
+    if (!conversionForm.affiliateId || !conversionForm.planAmount) {
+      showToast('⚠️ Please select a partner and enter sale details.');
       return;
     }
 
-    const commRate = Number(conversionForm.commissionRate || aff.commission_rate || 15);
-    const earnedComm = (Number(conversionForm.planAmount) * commRate) / 100;
-    const refId = `REF-${Date.now()}`;
+    const aff = affiliates.find(a => a.id === conversionForm.affiliateId);
+    if (!aff) return;
+
+    const planAmt = Number(conversionForm.planAmount);
+    const commRate = Number(conversionForm.commissionRate || 15);
+    const earnedComm = (planAmt * commRate) / 100;
 
     try {
-      // Insert Referral detail
-      await supabase.from('affiliate_referrals').insert({
-        id: refId,
-        affiliate_id: aff.id,
-        joined_telegram_id: `MANUAL_${Date.now()}`,
-        joined_username: conversionForm.joinedUsername || '@member',
-        joined_first_name: 'Premium Member',
-        status: 'CONVERTED_PREMIUM',
-        converted_plan: conversionForm.planName,
-        converted_amount: conversionForm.planAmount,
-        earned_commission: earnedComm,
-        payout_status: 'UNPAID'
-      });
-
-      // Update Affiliate balances
-      const newConversions = Number(aff.total_conversions || 0) + 1;
-      const newTotalEarned = Number(aff.total_earned || 0) + earnedComm;
-      const newUnpaid = Number(aff.unpaid_balance || 0) + earnedComm;
+      const newConversions = (aff.total_conversions || 0) + 1;
+      const newTotalEarned = (aff.total_earned || 0) + earnedComm;
+      const newUnpaid = (aff.unpaid_balance || 0) + earnedComm;
 
       await supabase.from('affiliates').update({
         total_conversions: newConversions,
@@ -182,7 +176,6 @@ export default function AffiliatesDeskView() {
         updated_at: new Date().toISOString()
       }).eq('id', aff.id);
 
-      // Trigger Telegram Bot Notification via API
       try {
         await fetch('http://localhost:3005/api/affiliate/conversion', {
           method: 'POST',
@@ -191,15 +184,15 @@ export default function AffiliatesDeskView() {
             affiliateId: aff.id,
             joinedUsername: conversionForm.joinedUsername || '@member',
             planName: conversionForm.planName,
-            planAmount: conversionForm.planAmount,
+            planAmount: planAmt,
             commissionEarned: earnedComm
           })
         });
       } catch (botErr) {
-        console.warn('Bot API alert notify fallback:', botErr.message);
+        console.warn('Bot API alert fallback:', botErr.message);
       }
 
-      showToast(`💰 Conversion logged! ${aff.telegram_handle} earned +$${earnedComm.toFixed(2)} USDT (${commRate}%).`);
+      showToast(`💰 Conversion logged! ${aff.name} earned +$${earnedComm.toFixed(2)} USDT (${commRate}%).`);
       setConversionModalOpen(false);
       setConversionForm({ affiliateId: '', joinedUsername: '', planName: 'Quarterly VIP ($299)', planAmount: 299, commissionRate: 15 });
       fetchAffiliateData();
@@ -219,12 +212,12 @@ export default function AffiliatesDeskView() {
   // Filtered Affiliates List
   const filteredAffiliates = affiliates.filter(aff => {
     const matchesSearch = 
-      (aff.first_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (aff.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (aff.telegram_handle || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (aff.wallet_address || '').toLowerCase().includes(searchQuery.toLowerCase());
     
     if (statusFilter === 'ALL') return matchesSearch;
-    if (statusFilter === 'ACTIVE') return matchesSearch && aff.status === 'Active';
+    if (statusFilter === 'ACTIVE') return matchesSearch && aff.status !== 'Inactive';
     if (statusFilter === 'UNPAID') return matchesSearch && Number(aff.unpaid_balance || 0) > 0;
     return matchesSearch;
   });
@@ -238,63 +231,68 @@ export default function AffiliatesDeskView() {
             <span className="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-[#e39e2e]/20 text-[#e39e2e] border border-[#e39e2e]/30 uppercase">
               100% Performance-Based
             </span>
-            <span className="text-xs text-slate-400 font-mono">Telegram Partner Engine</span>
+            <span className="text-xs text-slate-400 font-mono">Supabase Real-Time Pipeline</span>
           </div>
-          <h1 className="text-2xl font-black text-white uppercase tracking-tight mt-2">
+          <h2 className="text-2xl font-black text-white mt-2 tracking-tight uppercase">
             Affiliates &amp; Partner Management Desk
-          </h1>
+          </h2>
           <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-            Track registered partners, monitor live Telegram invite conversions, audit earnings transparency, and process crypto payouts with instant Telegram notifications.
+            Track all 11+ partners, monitor Telegram invite conversions, audit earnings transparency, and process crypto payouts with instant Telegram notifications.
           </p>
         </div>
+
         <div className="flex items-center gap-3">
           <button
             onClick={() => setConversionModalOpen(true)}
-            className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold uppercase tracking-wider transition-all border border-slate-700 flex items-center gap-2"
+            className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-[#e39e2e] hover:from-amber-600 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all flex items-center gap-2"
           >
             <span>💰 Log Sale Conversion</span>
           </button>
           <button
-            onClick={() => fetchAffiliateData()}
-            className="px-4 py-2.5 rounded-xl bg-[#e39e2e] hover:bg-[#d49024] text-slate-950 text-xs font-black uppercase tracking-wider transition-all shadow-lg shadow-[#e39e2e]/20 flex items-center gap-2"
+            onClick={fetchAffiliateData}
+            className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 transition-all flex items-center gap-2"
           >
             <span>🔄 Sync Live Data</span>
           </button>
         </div>
       </div>
 
-      {/* KPI Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <div className="p-4 bg-[#0f141d] border border-slate-800 rounded-2xl space-y-1">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Affiliates</span>
-          <div className="text-2xl font-black text-white font-mono">{totalAffiliatesCount}</div>
-          <span className="text-[10px] text-emerald-400">Registered Partners</span>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="bg-[#0f141d] p-5 rounded-2xl border border-slate-800 shadow-lg">
+          <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Total Partners</div>
+          <div className="text-2xl font-black text-white font-mono mt-1">{totalAffiliatesCount}</div>
+          <div className="text-[10px] text-emerald-400 mt-1 font-mono">Associates &amp; Affiliates</div>
         </div>
-        <div className="p-4 bg-[#0f141d] border border-slate-800 rounded-2xl space-y-1">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Free Group Joinees</span>
-          <div className="text-2xl font-black text-[#e39e2e] font-mono">{totalFreeJoineesSum}</div>
-          <span className="text-[10px] text-slate-400">Tracked via Bot Links</span>
+
+        <div className="bg-[#0f141d] p-5 rounded-2xl border border-slate-800 shadow-lg">
+          <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Free Group Joinees</div>
+          <div className="text-2xl font-black text-white font-mono mt-1">{totalFreeJoineesSum.toLocaleString()}</div>
+          <div className="text-[10px] text-slate-400 mt-1 font-mono">Tracked via Bot Links</div>
         </div>
-        <div className="p-4 bg-[#0f141d] border border-slate-800 rounded-2xl space-y-1">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Premium Conversions</span>
-          <div className="text-2xl font-black text-white font-mono">{totalConversionsSum}</div>
-          <span className="text-[10px] text-emerald-400">15%–25% Commission Sales</span>
+
+        <div className="bg-[#0f141d] p-5 rounded-2xl border border-slate-800 shadow-lg">
+          <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Premium Conversions</div>
+          <div className="text-2xl font-black text-white font-mono mt-1">{totalConversionsSum}</div>
+          <div className="text-[10px] text-[#e39e2e] mt-1 font-mono">VIP Commission Sales</div>
         </div>
-        <div className="p-4 bg-[#0f141d] border border-slate-800 rounded-2xl space-y-1">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Paid Out</span>
-          <div className="text-2xl font-black text-emerald-400 font-mono">${totalPaidSum.toFixed(2)}</div>
-          <span className="text-[10px] text-slate-400">Crypto Settlements</span>
+
+        <div className="bg-[#0f141d] p-5 rounded-2xl border border-slate-800 shadow-lg">
+          <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Total Paid Out</div>
+          <div className="text-2xl font-black text-emerald-400 font-mono mt-1">${totalPaidSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="text-[10px] text-slate-400 mt-1 font-mono">Crypto Settlements</div>
         </div>
-        <div className="p-4 bg-[#0f141d] border border-amber-500/30 rounded-2xl space-y-1 bg-amber-500/5">
-          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Unpaid Balance</span>
-          <div className="text-2xl font-black text-amber-400 font-mono">${totalUnpaidSum.toFixed(2)}</div>
-          <span className="text-[10px] text-amber-400 font-medium">Pending Partner Payouts</span>
+
+        <div className="bg-[#0f141d] p-5 rounded-2xl border border-slate-800 shadow-lg">
+          <div className="text-[11px] font-mono text-slate-400 uppercase tracking-wider">Unpaid Balance</div>
+          <div className="text-2xl font-black text-[#e39e2e] font-mono mt-1">${totalUnpaidSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="text-[10px] text-amber-500 mt-1 font-mono">Pending Partner Payouts</div>
         </div>
       </div>
 
-      {/* Public 15% Leaderboard Standings Preview */}
-      <div className="p-6 bg-[#0f141d] border border-slate-800 rounded-2xl space-y-4 shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+      {/* Public Leaderboard Display Widget */}
+      <div className="bg-[#0f141d] p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-lg">🏆</span>
             <h3 className="text-base font-black text-white uppercase tracking-tight">
@@ -332,197 +330,297 @@ export default function AffiliatesDeskView() {
         )}
       </div>
 
-
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#0f141d] p-4 rounded-2xl border border-slate-800">
-        <div className="relative w-full sm:w-80">
-          <input
-            type="text"
-            placeholder="Search by handle, name, wallet..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#e39e2e]"
-          />
-        </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          {['ALL', 'ACTIVE', 'UNPAID'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => setStatusFilter(tab)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase transition-all ${
-                statusFilter === tab
-                  ? 'bg-[#e39e2e] text-slate-950'
-                  : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+      {/* Main Section Navigation Tabs */}
+      <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+        <button
+          onClick={() => setActiveTab('ROSTER')}
+          className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+            activeTab === 'ROSTER'
+              ? 'bg-[#e39e2e] text-slate-950 shadow-lg'
+              : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <span>👥 Unified Partner Roster ({filteredAffiliates.length})</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('PAYOUT_LOGS')}
+          className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+            activeTab === 'PAYOUT_LOGS'
+              ? 'bg-[#e39e2e] text-slate-950 shadow-lg'
+              : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <span>📜 Payout Audit Log ({payoutLogs.length})</span>
+        </button>
       </div>
 
-      {/* Affiliates Master Table */}
-      <div className="bg-[#0f141d] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-          <h3 className="font-black text-white text-sm uppercase tracking-wider">Registered Affiliates &amp; Performance Records</h3>
-          <span className="text-xs text-slate-400 font-mono">Showing {filteredAffiliates.length} partners</span>
-        </div>
+      {activeTab === 'ROSTER' ? (
+        <>
+          {/* Filter & Search Bar */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#0f141d] p-4 rounded-2xl border border-slate-800">
+            <div className="relative w-full sm:w-80">
+              <input
+                type="text"
+                placeholder="Search by handle, name, wallet..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#e39e2e]"
+              />
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              {['ALL', 'ACTIVE', 'UNPAID'].map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setStatusFilter(tab)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase transition-all ${
+                    statusFilter === tab
+                      ? 'bg-[#e39e2e] text-slate-950'
+                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        {loading ? (
-          <div className="p-12 text-center text-slate-400 text-xs font-mono">Loading affiliate records...</div>
-        ) : filteredAffiliates.length === 0 ? (
-          <div className="p-12 text-center text-slate-500 text-xs font-mono">No affiliate records match your filter criteria.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
-                <tr>
-                  <th className="px-6 py-3.5">Partner</th>
-                  <th className="px-6 py-3.5">Telegram Handle</th>
-                  <th className="px-6 py-3.5">Invite Link</th>
-                  <th className="px-6 py-3.5">Rate</th>
-                  <th className="px-6 py-3.5">Free Joinees</th>
-                  <th className="px-6 py-3.5">Sales</th>
-                  <th className="px-6 py-3.5">Total Earned</th>
-                  <th className="px-6 py-3.5">Unpaid Balance</th>
-                  <th className="px-6 py-3.5">Payout Wallet</th>
-                  <th className="px-6 py-3.5 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 font-mono">
-                {filteredAffiliates.map(aff => (
-                  <tr key={aff.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="px-6 py-4 font-bold text-white font-sans">
-                      {aff.first_name || aff.id}
-                      <div className="text-[10px] font-mono font-normal text-slate-500">{aff.id}</div>
-                    </td>
-                    <td className="px-6 py-4 font-bold text-[#e39e2e]">{aff.telegram_handle || 'N/A'}</td>
-                    <td className="px-6 py-4">
-                      {aff.invite_link ? (
-                        <div className="flex items-center gap-1">
-                          <span className="truncate max-w-[140px] text-slate-300">{aff.invite_link}</span>
+          {/* Affiliates Master Table */}
+          <div className="bg-[#0f141d] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="font-black text-white text-sm uppercase tracking-wider">Registered Affiliates &amp; Performance Records</h3>
+              <span className="text-xs text-slate-400 font-mono">Showing {filteredAffiliates.length} partners</span>
+            </div>
+
+            {loading ? (
+              <div className="p-12 text-center text-slate-400 text-xs font-mono">Loading affiliate records...</div>
+            ) : filteredAffiliates.length === 0 ? (
+              <div className="p-12 text-center text-slate-500 text-xs font-mono">No affiliate records match your filter criteria.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
+                    <tr>
+                      <th className="px-6 py-3.5">Partner</th>
+                      <th className="px-6 py-3.5">Type</th>
+                      <th className="px-6 py-3.5">Telegram Handle</th>
+                      <th className="px-6 py-3.5">Invite Link</th>
+                      <th className="px-6 py-3.5">Rate</th>
+                      <th className="px-6 py-3.5">Free Joinees</th>
+                      <th className="px-6 py-3.5">Sales</th>
+                      <th className="px-6 py-3.5">Total Earned</th>
+                      <th className="px-6 py-3.5">Total Paid</th>
+                      <th className="px-6 py-3.5">Unpaid Balance</th>
+                      <th className="px-6 py-3.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono">
+                    {filteredAffiliates.map(aff => (
+                      <tr key={aff.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="px-6 py-4 font-bold text-white font-sans">
+                          {aff.name || aff.id}
+                          <div className="text-[10px] font-mono font-normal text-slate-500">{aff.id}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold font-mono ${
+                            aff.partner_type === 'ASSOCIATE' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                          }`}>
+                            {aff.partner_type || 'AFFILIATE'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-bold text-[#e39e2e]">{aff.telegram_handle || 'N/A'}</td>
+                        <td className="px-6 py-4">
+                          {aff.invite_link ? (
+                            <div className="flex items-center gap-1">
+                              <span className="truncate max-w-[140px] text-slate-300">{aff.invite_link}</span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(aff.invite_link);
+                                  showToast('📋 Invite link copied to clipboard!');
+                                }}
+                                className="p-1 text-slate-400 hover:text-white"
+                                title="Copy link"
+                              >
+                                📋
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-slate-600 italic">Not Generated</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 font-bold text-emerald-400">{aff.commission_rate || 15}%</td>
+                        <td className="px-6 py-4 font-bold text-slate-200">{aff.total_free_joins || 0}</td>
+                        <td className="px-6 py-4 font-bold text-[#e39e2e]">{aff.total_conversions || 0}</td>
+                        <td className="px-6 py-4 font-bold text-white">${Number(aff.total_earned || 0).toFixed(2)}</td>
+                        <td className="px-6 py-4 font-bold text-emerald-400">${Number(aff.total_paid || 0).toFixed(2)}</td>
+                        <td className="px-6 py-4 font-bold text-[#e39e2e]">
+                          ${Number(aff.unpaid_balance || 0).toFixed(2)}
+                        </td>
+                        <td className="px-6 py-4 text-right">
                           <button
                             onClick={() => {
-                              navigator.clipboard.writeText(aff.invite_link);
-                              showToast('📋 Invite link copied to clipboard!');
+                              setSelectedAffiliate(aff);
+                              setPayoutForm({
+                                amount: Number(aff.unpaid_balance || 0) > 0 ? String(aff.unpaid_balance) : '',
+                                currency: 'USDT',
+                                txHash: '',
+                                notes: ''
+                              });
+                              setPayoutModalOpen(true);
                             }}
-                            className="p-1 text-slate-400 hover:text-white"
-                            title="Copy link"
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold font-sans uppercase transition-all ${
+                              Number(aff.unpaid_balance || 0) > 0
+                                ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow'
+                                : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                            }`}
                           >
-                            📋
+                            Process Payout
                           </button>
-                        </div>
-                      ) : (
-                        <span className="text-slate-600 italic">Not Generated</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 font-bold text-emerald-400">{aff.commission_rate || 15}%</td>
-                    <td className="px-6 py-4 font-bold text-slate-200">{aff.total_free_joins || 0}</td>
-                    <td className="px-6 py-4 font-bold text-white">{aff.total_conversions || 0}</td>
-                    <td className="px-6 py-4 font-bold text-slate-200">${Number(aff.total_earned || 0).toFixed(2)}</td>
-                    <td className="px-6 py-4 font-bold text-amber-400">
-                      ${Number(aff.unpaid_balance || 0).toFixed(2)}
-                    </td>
-                    <td className="px-6 py-4">
-                      {aff.wallet_address ? (
-                        <span className="truncate max-w-[120px] block text-slate-400" title={aff.wallet_address}>
-                          {aff.wallet_address.substring(0, 6)}...{aff.wallet_address.substring(aff.wallet_address.length - 4)}
-                        </span>
-                      ) : (
-                        <span className="text-amber-500/70 text-[10px] italic">Not Set</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => {
-                          setSelectedAffiliate(aff);
-                          setPayoutForm(prev => ({ ...prev, amount: String(aff.unpaid_balance || 0) }));
-                          setPayoutModalOpen(true);
-                        }}
-                        disabled={Number(aff.unpaid_balance || 0) <= 0}
-                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase transition-all ${
-                          Number(aff.unpaid_balance || 0) > 0
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30'
-                            : 'bg-slate-800 text-slate-600 border border-slate-800 cursor-not-allowed'
-                        }`}
-                      >
-                        Process Payout
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        /* Payout Audit Log Table */
+        <div className="bg-[#0f141d] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+          <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+            <h3 className="font-black text-white text-sm uppercase tracking-wider">Immutable Payout Transaction Audit Ledger</h3>
+            <span className="text-xs text-slate-400 font-mono">Total {payoutLogs.length} Transactions</span>
+          </div>
 
-      {/* PROCESS PAYOUT MODAL */}
+          {payoutLogs.length === 0 ? (
+            <div className="p-12 text-center text-slate-500 text-xs font-mono">No payout logs recorded yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="px-6 py-3.5">Date &amp; Time (UTC)</th>
+                    <th className="px-6 py-3.5">Payment ID</th>
+                    <th className="px-6 py-3.5">Partner Name</th>
+                    <th className="px-6 py-3.5">Type</th>
+                    <th className="px-6 py-3.5">Amount Paid</th>
+                    <th className="px-6 py-3.5">Currency</th>
+                    <th className="px-6 py-3.5">Blockchain TxHash</th>
+                    <th className="px-6 py-3.5">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 font-mono">
+                  {payoutLogs.map(log => {
+                    const dateStr = new Date(log.created_at).toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+                    return (
+                      <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="px-6 py-4 font-bold text-slate-300">{dateStr}</td>
+                        <td className="px-6 py-4 text-slate-400">{log.id}</td>
+                        <td className="px-6 py-4 font-bold text-white font-sans">{log.partner_name} ({log.partner_id})</td>
+                        <td className="px-6 py-4">
+                          <span className="px-2 py-0.5 rounded text-[9px] font-bold font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            {log.partner_type || 'AFFILIATE'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 font-bold text-emerald-400">${Number(log.amount).toFixed(2)}</td>
+                        <td className="px-6 py-4 text-amber-400 font-bold">{log.currency}</td>
+                        <td className="px-6 py-4 font-mono text-slate-300">
+                          <span className="truncate max-w-[150px] inline-block">{log.tx_hash}</span>
+                        </td>
+                        <td className="px-6 py-4 text-slate-400 italic">{log.notes || 'Admin Execution'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Process Payout Modal */}
       {payoutModalOpen && selectedAffiliate && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0f141d] border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in duration-150">
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-              <h3 className="font-black text-white uppercase text-sm">Process Crypto Payout</h3>
-              <button onClick={() => setPayoutModalOpen(false)} className="text-slate-400 hover:text-white">✕</button>
-            </div>
-            <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-1 font-mono text-xs">
-              <div className="text-slate-400">Partner: <span className="text-white font-bold">{selectedAffiliate.first_name} ({selectedAffiliate.telegram_handle})</span></div>
-              <div className="text-slate-400">Unpaid Balance: <span className="text-amber-400 font-bold">${Number(selectedAffiliate.unpaid_balance).toFixed(2)} USDT</span></div>
-              <div className="text-slate-400 truncate">Wallet: <span className="text-emerald-400 font-bold">{selectedAffiliate.wallet_address || 'Unset'}</span></div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-[#0f141d] border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="text-base font-black text-white uppercase tracking-tight">Process Partner Payout</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  {selectedAffiliate.name} ({selectedAffiliate.id})
+                </p>
+              </div>
+              <button
+                onClick={() => setPayoutModalOpen(false)}
+                className="text-slate-400 hover:text-white text-lg font-bold"
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleProcessPayout} className="space-y-3">
+            <form onSubmit={handleProcessPayout} className="space-y-4">
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Payout Amount ($)</label>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Payout Amount ($)</label>
                 <input
                   type="number"
                   step="0.01"
                   required
+                  placeholder="0.00"
                   value={payoutForm.amount}
                   onChange={e => setPayoutForm({ ...payoutForm, amount: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-[#e39e2e]"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-[#e39e2e]"
                 />
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Currency</label>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Settlement Currency</label>
                 <select
                   value={payoutForm.currency}
                   onChange={e => setPayoutForm({ ...payoutForm, currency: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-[#e39e2e]"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#e39e2e]"
                 >
-                  <option value="USDT">USDT (TRC20 / ERC20)</option>
-                  <option value="USDC">USDC</option>
-                  <option value="SOL">Solana (SOL)</option>
-                  <option value="BTC">Bitcoin (BTC)</option>
+                  <option value="USDT">USDT (Tether TRC20/ERC20)</option>
+                  <option value="USDC">USDC (USD Coin)</option>
+                  <option value="SOL">SOL (Solana)</option>
+                  <option value="BTC">BTC (Bitcoin)</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Blockchain TxHash / Ref ID</label>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Blockchain TxHash / Ref</label>
                 <input
                   type="text"
                   required
-                  placeholder="Paste transaction hash..."
+                  placeholder="Enter transaction hash or reference..."
                   value={payoutForm.txHash}
                   onChange={e => setPayoutForm({ ...payoutForm, txHash: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-[#e39e2e]"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-[#e39e2e]"
                 />
               </div>
 
-              <div className="pt-2 flex gap-3">
+              <div>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Admin Notes (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="Weekly settlement payment..."
+                  value={payoutForm.notes}
+                  onChange={e => setPayoutForm({ ...payoutForm, notes: e.target.value })}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#e39e2e]"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setPayoutModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold uppercase"
+                  className="w-1/2 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition-all"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs uppercase shadow-lg shadow-emerald-500/20"
+                  className="w-1/2 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all"
                 >
-                  Confirm &amp; Alert Bot
+                  Confirm Payout
                 </button>
               </div>
             </form>
@@ -530,86 +628,10 @@ export default function AffiliatesDeskView() {
         </div>
       )}
 
-      {/* LOG MANUAL CONVERSION MODAL */}
-      {conversionModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0f141d] border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in duration-150">
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-              <h3 className="font-black text-white uppercase text-sm">Log Premium Sale Conversion</h3>
-              <button onClick={() => setConversionModalOpen(false)} className="text-slate-400 hover:text-white">✕</button>
-            </div>
-
-            <form onSubmit={handleLogConversion} className="space-y-3">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Select Affiliate Partner</label>
-                <select
-                  required
-                  value={conversionForm.affiliateId}
-                  onChange={e => setConversionForm({ ...conversionForm, affiliateId: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-[#e39e2e]"
-                >
-                  <option value="">-- Choose Partner --</option>
-                  {affiliates.map(a => (
-                    <option key={a.id} value={a.id}>{a.first_name} ({a.telegram_handle || a.id})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Referred Buyer Username</label>
-                <input
-                  type="text"
-                  placeholder="@buyer_username"
-                  value={conversionForm.joinedUsername}
-                  onChange={e => setConversionForm({ ...conversionForm, joinedUsername: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-[#e39e2e]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Purchased Plan</label>
-                <select
-                  value={conversionForm.planName}
-                  onChange={e => {
-                    const plan = e.target.value;
-                    let amt = 299;
-                    if (plan.includes('499')) amt = 499;
-                    if (plan.includes('799')) amt = 799;
-                    setConversionForm({ ...conversionForm, planName: plan, planAmount: amt });
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-[#e39e2e]"
-                >
-                  <option value="Quarterly VIP ($299)">Quarterly VIP ($299)</option>
-                  <option value="Half-Yearly VIP ($499)">Half-Yearly VIP ($499)</option>
-                  <option value="Yearly VIP ($799)">Yearly VIP ($799)</option>
-                </select>
-              </div>
-
-              <div className="pt-2 flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setConversionModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold uppercase"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-[#e39e2e] hover:bg-[#d49024] text-slate-950 font-black text-xs uppercase shadow-lg shadow-[#e39e2e]/20"
-                >
-                  Log &amp; Send Telegram Alert
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Toast Notification Container */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 p-4 bg-[#0f141d] border border-[#e39e2e]/50 shadow-2xl rounded-2xl text-xs font-bold text-white flex items-center gap-3">
-          <span>⚡️</span>
-          <p>{toastMessage}</p>
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 border border-[#e39e2e] text-white px-5 py-3 rounded-xl shadow-2xl text-xs font-mono flex items-center gap-3 animate-bounce">
+          <span>{toast.message}</span>
         </div>
       )}
     </div>
