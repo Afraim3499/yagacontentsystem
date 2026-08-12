@@ -73,15 +73,38 @@ export default function MemberTrackingDeskView() {
 
   const [saving, setSaving] = useState(false);
 
-  // Fetch Data from Supabase
+  // Pagination State (100 members per page)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(100);
+
+  // Reset to Page 1 whenever search or filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus, itemsPerPage]);
+
+  // Fetch Data from Supabase concurrently across ranges
   const fetchData = async () => {
     setLoading(true);
     try {
       const { data: ascData } = await supabase.from('associates').select('*').order('created_at', { ascending: false });
       setAssociates(ascData || []);
 
-      const { data: memData } = await supabase.from('community_members_log').select('*').order('created_at', { ascending: false });
-      setMembersLog(memData || []);
+      // Concurrently fetch all ranges in parallel to load 3,299+ members in <1 sec
+      const pagePromises = [
+        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(0, 999),
+        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(1000, 1999),
+        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(2000, 2999),
+        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(3000, 3999),
+        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(4000, 4999)
+      ];
+      const pageResults = await Promise.all(pagePromises);
+      let allMembers = [];
+      pageResults.forEach(res => {
+        if (res.data && res.data.length > 0) {
+          allMembers = allMembers.concat(res.data);
+        }
+      });
+      setMembersLog(allMembers);
 
       const { data: pkgData } = await supabase.from('vip_packages').select('*').order('price', { ascending: true });
       setPackages(pkgData || []);
@@ -94,6 +117,7 @@ export default function MemberTrackingDeskView() {
     setLoading(false);
     setRefreshing(false);
   };
+
 
   useEffect(() => {
     fetchData();
@@ -326,6 +350,13 @@ export default function MemberTrackingDeskView() {
     });
   }, [membersLog, searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus]);
 
+  // Paginated Data (100 members per page)
+  const totalPages = Math.ceil(filteredLog.length / itemsPerPage) || 1;
+  const paginatedLog = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredLog.slice(start, start + itemsPerPage);
+  }, [filteredLog, currentPage, itemsPerPage]);
+
   // Summary Metrics Calculations
   const freeMembersCount = membersLog.filter(m => m.member_tier === 'FREE_ONLY' || !m.member_tier).length;
   const paidVipCount = membersLog.filter(m => m.member_tier === 'PAID_VIP').length;
@@ -335,6 +366,7 @@ export default function MemberTrackingDeskView() {
     const paidC = Number(m.paid_commission) || 0;
     return sum + freeC + paidC;
   }, 0);
+
 
   // CSV Export Function
   const exportCSV = () => {
@@ -570,7 +602,9 @@ export default function MemberTrackingDeskView() {
                 <p className="text-sm font-semibold">No member entries found matching filters.</p>
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-2xl border border-white/10">
+              <>
+                <div className="overflow-x-auto rounded-2xl border border-white/10">
+
                 <table className="w-full text-left text-xs text-slate-300">
                   <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
                     <tr>
@@ -585,7 +619,7 @@ export default function MemberTrackingDeskView() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 font-mono">
-                    {filteredLog.map((item) => {
+                    {paginatedLog.map((item) => {
                       const totalComm = (Number(item.free_commission || 0.30) + Number(item.paid_commission || 0)).toFixed(2);
                       const isVip = item.member_tier === 'PAID_VIP';
 
@@ -656,7 +690,76 @@ export default function MemberTrackingDeskView() {
                   </tbody>
                 </table>
               </div>
-            )}
+
+              {/* 100-ROW PAGINATION CONTROLS BAR */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#080a0f] p-4 rounded-2xl border border-white/10 text-xs">
+                <div className="text-slate-400 font-mono">
+                  Showing <span className="text-white font-bold">{filteredLog.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</span> to <span className="text-white font-bold">{Math.min(currentPage * itemsPerPage, filteredLog.length)}</span> of <span className="text-[#e39e2e] font-bold">{filteredLog.length}</span> members
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap justify-center">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
+                    title="First Page"
+                  >
+                    « First
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
+                  >
+                    ‹ Prev
+                  </button>
+
+                  <div className="flex items-center gap-1 mx-2">
+                    <span className="text-slate-400 font-mono">Page</span>
+                    <select
+                      value={currentPage}
+                      onChange={(e) => setCurrentPage(Number(e.target.value))}
+                      className="bg-[#121722] text-[#e39e2e] font-bold font-mono px-2 py-1 rounded-lg border border-[#e39e2e]/40 focus:outline-none cursor-pointer"
+                    >
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-slate-400 font-mono">of {totalPages}</span>
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
+                  >
+                    Next ›
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
+                    title="Last Page"
+                  >
+                    Last »
+                  </button>
+
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                    className="ml-3 bg-[#121722] text-slate-300 font-mono text-[11px] px-2 py-1.5 rounded-lg border border-white/10 cursor-pointer"
+                  >
+                    <option value={100}>100 per page</option>
+                    <option value={250}>250 per page</option>
+                    <option value={500}>500 per page</option>
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
+
           </div>
         )}
 

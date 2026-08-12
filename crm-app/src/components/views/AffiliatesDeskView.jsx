@@ -4,7 +4,9 @@ import { supabase } from '../../lib/supabase';
 export default function AffiliatesDeskView() {
   const [affiliates, setAffiliates] = useState([]);
   const [referrals, setReferrals] = useState([]);
+  const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [toastMessage, setToastMessage] = useState(null);
@@ -44,18 +46,36 @@ export default function AffiliatesDeskView() {
     setLoading(true);
     try {
       const { data: affData, error: affErr } = await supabase.from('affiliates').select('*').order('created_at', { ascending: false });
-      const { data: refData, error: refErr } = await supabase.from('affiliate_referrals').select('*').order('created_at', { ascending: false });
+      
+      let allRefs = [];
+      let page = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: refPage, error: refErr } = await supabase
+          .from('affiliate_referrals')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+        if (refErr || !refPage || refPage.length === 0) break;
+        allRefs = allRefs.concat(refPage);
+        if (refPage.length < pageSize) break;
+        page++;
+      }
 
       if (affErr) console.error('Error fetching affiliates:', affErr);
-      if (refErr) console.error('Error fetching referrals:', refErr);
+
+      const { data: lbData } = await supabase.from('affiliate_leaderboard_view').select('*').limit(5);
 
       setAffiliates(affData || []);
-      setReferrals(refData || []);
+      setReferrals(allRefs);
+      setLeaderboard(lbData || []);
+
     } catch (err) {
       console.error('Database connection error:', err);
     }
     setLoading(false);
   }
+
 
   // Handle Process Payout Submission
   const handleProcessPayout = async (e) => {
@@ -256,6 +276,47 @@ export default function AffiliatesDeskView() {
           <span className="text-[10px] text-amber-400 font-medium">Pending Partner Payouts</span>
         </div>
       </div>
+
+      {/* Public 15% Leaderboard Standings Preview */}
+      <div className="p-6 bg-[#0f141d] border border-slate-800 rounded-2xl space-y-4 shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🏆</span>
+            <h3 className="text-base font-black text-white uppercase tracking-tight">
+              Public Website Leaderboard (15% Commission Scale)
+            </h3>
+          </div>
+          <span className="text-[10px] font-mono font-bold text-[#e39e2e] bg-[#e39e2e]/10 border border-[#e39e2e]/30 px-3 py-1 rounded-full uppercase">
+            Live Website Sync
+          </span>
+        </div>
+
+        {leaderboard.length === 0 ? (
+          <div className="text-xs text-slate-500 font-mono py-2">No leaderboard data available.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            {leaderboard.map((item, idx) => {
+              const badges = ['👑 #1', '🥈 #2', '🥉 #3', '#4', '#5'];
+              const borders = ['border-amber-500/40 bg-amber-500/5', 'border-slate-400/40 bg-slate-400/5', 'border-amber-700/40 bg-amber-700/5', 'border-slate-800 bg-slate-900/40', 'border-slate-800 bg-slate-900/40'];
+              const displayed = Number(item.public_displayed_earnings || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+              return (
+                <div key={item.associate_id || idx} className={`p-3.5 rounded-xl border ${borders[idx] || borders[3]} space-y-1.5`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black font-mono text-[#e39e2e]">{badges[idx]}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">{item.vip_conversions || 0} VIP Sales</span>
+                  </div>
+                  <div className="text-sm font-black text-white font-mono truncate">{item.anonymized_name}</div>
+                  <div className="text-xs font-mono font-bold text-emerald-400 pt-1 border-t border-slate-800/60">
+                    ${displayed} <span className="text-[9px] text-slate-500 font-normal">(15% rate)</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
 
       {/* Filter & Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#0f141d] p-4 rounded-2xl border border-slate-800">
