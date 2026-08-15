@@ -312,20 +312,20 @@ setInterval(runAutoNudgeAndOutreach, 10 * 60 * 1000);
 const server = http.createServer((req, res) => {
   if (req.url === '/api/concierge/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_concierge_bot', engine: 'Yaga Concierge Engine V1.0' }));
+    res.end(JSON.stringify({ status: 'ACTIVE', bot: '@yaga_client_relation_bot', engine: 'Yaga Client Relation Engine V1.0' }));
   } else {
     res.writeHead(404); res.end();
   }
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Concierge API Health Check running on http://localhost:${PORT}`);
+  console.log(`🚀 Client Relation API Health Check running on http://localhost:${PORT}`);
 });
 
 // Polling updates loop
 let offset = 0;
 async function pollUpdates() {
-  console.log(`🤖 Yaga Concierge Bot Active! Polling updates...`);
+  console.log(`🤖 Yaga Client Relation Bot Active! Polling updates...`);
   const allowedUpdates = JSON.stringify(["message", "callback_query"]);
 
   while (true) {
