@@ -446,12 +446,20 @@ Tap the button below to message our Desk directly. We already know your name and
     else if (data === 'close_free') {
       await updateUserState(telegramId, { current_stage: 'COMPLETED' });
       const text = 
-`Understood, *${firstName}*. Take all the time you need to watch our desk from the free channel.
+`Understood, *${firstName}*. Take all the time you need to watch our desk.
 
-I will send you a brief, 3-bullet *Market Pulse* safety update every Sunday evening to keep you updated on macro rotations and capital flow changes. 
+Click the button below to join our Free Intelligence Channel (tracked and verified by our system):
 
-If you ever want to run your diagnostic average again or upgrade, just type a message here or contact @yagacalls47. Have a safe and profitable week!`;
-      await sendMessage(chatId, text);
+I will also send you a brief, 3-bullet *Market Pulse* safety update here every Sunday evening to keep you updated on macro rotations and capital flow changes. 
+
+If you ever want to run your diagnostic alignment test again or upgrade, just type a message here or contact @yagacalls47. Have a safe and profitable week!`;
+      
+      const freeKeyboard = {
+        inline_keyboard: [
+          [{ text: '📢 Join Free Intelligence Channel', url: 'https://t.me/+JFf8kBf01mg3OTg1' }]
+        ]
+      };
+      await sendMessage(chatId, text, freeKeyboard);
     }
   }
 }
