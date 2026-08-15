@@ -1,6 +1,6 @@
 // ====================================================================
-// YAGA CALLS CONCIERGE BOT — Conversational & Outreach Engine (V1.0)
-// Establishes a warm, human-centric conversion funnel on Telegram
+// YAGA CALLS CLIENT RELATION BOT — Conversational & Outreach Engine
+// Implements an interactive "Trading Archetype Test" conversion funnel
 // Runs standalone or via PM2: node concierge_bot_engine.js
 // ====================================================================
 
@@ -8,7 +8,7 @@ require('dotenv').config();
 const http = require('http');
 const { Client } = require('pg');
 
-const BOT_TOKEN = process.env.TELEGRAM_CONCIERGE_BOT_TOKEN || '8642738902:AAHconcierge_placeholder_token';
+const BOT_TOKEN = process.env.TELEGRAM_CONCIERGE_BOT_TOKEN || '8821931231:AAF43WpD1m-7RqJLKwnwltuiWwCTBTiQ6gM';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = process.env.CONCIERGE_BOT_PORT || 3006;
@@ -86,31 +86,47 @@ async function updateUserState(telegramId, fields) {
   `, params);
 }
 
-// Keyboards Builder
+// Keyboards for Gamified Archetype Funnel
 function getWelcomeKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: '🔴 I keep losing capital to market noise', callback_data: 'select_loss_pain' }],
-      [{ text: '🟢 I want a professional, calm trading routine', callback_data: 'select_structure' }]
+      [{ text: '⚡ Start My Alignment Test', callback_data: 'start_test' }]
     ]
   };
 }
 
-function getMethodOrProofKeyboard() {
+function getQuestion1Keyboard() {
   return {
     inline_keyboard: [
-      [{ text: '🛡️ How do you protect capital? (Method)', callback_data: 'show_method' }],
-      [{ text: '📈 Show me your historical setups (Proof)', callback_data: 'show_proof' }]
+      [{ text: '📊 Technical charts and indicator lines', callback_data: 'q1_charts' }],
+      [{ text: '📰 Breaking news headlines and twitter chatter', callback_data: 'q1_news' }],
+      [{ text: '🔄 Following trade calls from social groups', callback_data: 'q1_groups' }]
     ]
   };
 }
 
-function getRiskSegmentKeyboard() {
+function getQuestion2Keyboard() {
   return {
     inline_keyboard: [
-      [{ text: '💵 I trade Spot only (Low Risk)', callback_data: 'risk_spot' }],
-      [{ text: '⚡ I trade Futures / Leverage (Medium-High)', callback_data: 'risk_futures' }],
-      [{ text: '🎓 I am a complete beginner, just learning', callback_data: 'risk_beginner' }]
+      [{ text: '😰 I hold and hope it recovers to break-even', callback_data: 'q2_hope' }],
+      [{ text: '😡 I double-down to lower my entry price', callback_data: 'q2_double' }],
+      [{ text: '🛡️ My stop-loss exits immediately (I feel safe)', callback_data: 'q2_safe' }]
+    ]
+  };
+}
+
+function getDiagnosticKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '🔬 How does Yaga Calls solve this?', callback_data: 'show_methodology' }]
+    ]
+  };
+}
+
+function getMethodologyKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📈 Show me real proof of this in action', callback_data: 'show_proof' }]
     ]
   };
 }
@@ -145,20 +161,23 @@ async function handleUpdate(update) {
     const firstName = msg.from.first_name || 'Trader';
 
     if (text.startsWith('/start')) {
-      const state = await getOrCreateUserState(telegramId, firstName, username);
+      await getOrCreateUserState(telegramId, firstName, username);
       await updateUserState(telegramId, { current_stage: 'WELCOME' });
 
       const welcomeText = 
-`Hi *${firstName}*, I’m really glad you found your way to Yaga Calls.
+`👑 *YAGA CALLS | CLIENT RELATION DESK*
 
-I’m not a command-bot or a billing assistant—I’m here to personally help you navigate our desk and make sure you have the best possible experience. The crypto market can be incredibly noisy, and my goal is to make it simple, structured, and safe for you.
+Hello *${firstName}*. Welcome to our intelligence portal.
 
-Tell me honestly, *${firstName}*, what describes your trading journey best right now?`;
+I am not a basic system assistant. I am here to help you configure your market approach, protect your trading capital, and introduce you to our desk. 
+
+Before we look at charts or numbers, we need to understand your trading psychology. 
+
+Let's run a quick, 1-minute *Trading Alignment Test* to map your market archetype and identify where your capital might be leaking.`;
 
       await sendMessage(chatId, welcomeText, getWelcomeKeyboard());
     } else {
-      // General response fallback or direct human route instructions
-      await sendMessage(chatId, `Hi *${firstName}*, if you'd like to chat with a live representative or ask a specific question, feel free to contact our Desk directly at @yagacalls47. I'm always standing by to help!`);
+      await sendMessage(chatId, `Hello *${firstName}*. If you'd like to chat with a live representative or ask a specific question, feel free to contact our Desk directly at @yagacalls47. I'm always standing by to help!`);
     }
   }
 
@@ -170,70 +189,131 @@ Tell me honestly, *${firstName}*, what describes your trading journey best right
     const telegramId = String(cb.from.id);
     const firstName = cb.from.first_name || 'Trader';
 
-    // Segment & Stage 2 Transition
-    if (data === 'select_loss_pain') {
-      await updateUserState(telegramId, { current_stage: 'DECONSTRUCT_NOISE', loss_pain: true });
+    // Start Test -> Question 1
+    if (data === 'start_test') {
+      await updateUserState(telegramId, { current_stage: 'QUESTION_1' });
       const text = 
-`I hear you, *${firstName}*. It is incredibly frustrating. The truth is, 90% of retail traders lose because they chase green candles and hype. The system is designed to liquidate you.
+`⚡ *STAGE 1: THE INITIATION*
 
-At Yaga Calls, we don't do hype. We don't guarantee millions. We focus on narrative capital flows and strict stop-losses to make sure your downside is always protected. Because keeping your money is the first step to growing it.`;
-      await sendMessage(chatId, text, getMethodOrProofKeyboard());
+Let's look at how you make decisions.
+
+When you decide to buy a coin or open a position, what is the primary factor that drives your choice?`;
+      await sendMessage(chatId, text, getQuestion1Keyboard());
     }
 
-    else if (data === 'select_structure') {
-      await updateUserState(telegramId, { current_stage: 'DECONSTRUCT_NOISE', professional_structure: true });
-      const text = 
-`That is exactly the right mindset, *${firstName}*. Discipline is what separates professional market players from gamblers.
+    // Question 1 Answers -> Question 2
+    else if (data.startsWith('q1_')) {
+      const choice = data.replace('q1_', '');
+      await updateUserState(telegramId, { 
+        current_stage: 'QUESTION_2',
+        risk_segment: choice === 'charts' ? 'CHART_READER' : (choice === 'news' ? 'HYPE_HUNTER' : 'SOCIAL_FOLLOWER')
+      });
 
-We treat digital assets like an institutional capital desk. Every setup we share has a clear invalidation level (stop-loss) and a logical 'why' behind it. We look at narrative rotations—where the big fund managers are moving their cash—rather than drawing random lines on charts.`;
-      await sendMessage(chatId, text, getMethodOrProofKeyboard());
+      const text = 
+`⚡ *STAGE 2: THE REACTION*
+
+Got it. Now let's look at how you handle risk.
+
+Imagine you enter a trade, and the price immediately goes against you by *5%*. What is your realistic response?`;
+      await sendMessage(chatId, text, getQuestion2Keyboard());
     }
 
-    // Segment & Stage 3 Transition (Method or Proof clicked)
-    else if (data === 'show_method' || data === 'show_proof') {
-      await updateUserState(telegramId, { current_stage: 'CUSTOMIZATION_LAYER' });
-      const text = 
-`Before I show you our setups, let's make this personal to your situation. Everyone trades differently.
+    // Question 2 Answers -> Diagnostic
+    else if (data.startsWith('q2_')) {
+      const choice = data.replace('q2_', '');
+      const state = await getOrCreateUserState(telegramId, firstName, '');
+      const archetype = state.risk_segment || 'TRADER';
 
-To help me customize what I share with you, what is your current comfort level with leverage and trading size?`;
-      await sendMessage(chatId, text, getRiskSegmentKeyboard());
-    }
+      let diagnosticTitle = '';
+      let diagnosticBody = '';
 
-    // Segment & Stage 4 Transition (Risk segments clicked)
-    else if (data === 'risk_spot' || data === 'risk_futures' || data === 'risk_beginner') {
-      const segment = data === 'risk_spot' ? 'SPOT' : (data === 'risk_futures' ? 'LEVERAGE' : 'BEGINNER');
-      await updateUserState(telegramId, { current_stage: 'PROOF_SHOWN', risk_segment: segment });
-
-      let tailText = '';
-      if (segment === 'SPOT') {
-        tailText = `Instead of panic-selling during market crashes, our desk identifies structural shifts. We rotate capital out of weak sectors and into high-conviction spot assets, allowing you to build portfolio value quietly and cleanly.`;
-      } else if (segment === 'LEVERAGE') {
-        tailText = `We look for macro deviations (such as a sweep of BTC liquidity). We calculate strict risk parameters, enforce stop-losses, and aim for clean 3:1 reward-to-risk setups to compound futures balances safely.`;
+      if (choice === 'hope') {
+        diagnosticTitle = 'THE HOPEFUL HOLDER';
+        diagnosticBody = `You hate taking losses. When a trade goes red, your brain blocks out the risk and tells you to wait. This emotional bias is exactly how retail traders turn a small 5% stop-loss into a permanent 80% portfolio drawdown. It is exhausting and drains your confidence.`;
+      } else if (choice === 'double') {
+        diagnosticTitle = 'THE RISK MULTIPLIER';
+        diagnosticBody = `You double-down to lower your entry average. While this can work in ranging markets, it exposes you to massive capital liquidation when a real narrative trend breaks down. You are fighting the market trend instead of respecting it.`;
       } else {
-        tailText = `We guide you step-by-step. You will learn to read narrative changes and understand how stop-losses work before you ever click buy. Education always comes before risk.`;
+        diagnosticTitle = 'THE STRUCTURED OBSERVER';
+        diagnosticBody = `You respect stop-losses, which is a great start. However, if your decision engine is still based on noisy Twitter chatter or retail indicators, you are simply exiting valid trades early because you don't have deep narrative conviction.`;
       }
 
+      await updateUserState(telegramId, { 
+        current_stage: 'DIAGNOSTIC_REVEALED',
+        loss_pain: choice !== 'safe'
+      });
+
       const text = 
-`Got it. Here is a brief look at how we configure trades for a *${segment}* risk profile.
+`🔍 *YOUR MARKET ARCHETYPE: ${diagnosticTitle}*
 
-${tailText}
+*${firstName}*, here is what our calculations show:
 
-We publish all of our results—both wins and losses—fully verified in our performance ledger. You can review them transparently at any time.`;
+${diagnosticBody}
+
+Please understand: *This is not your fault.* The retail market is engineered by institutional players to exploit these exact emotional loops. To survive, you must stop guessing and start calculating.`;
+
+      await sendMessage(chatId, text, getDiagnosticKeyboard());
+    }
+
+    // Show Methodology
+    else if (data === 'show_methodology') {
+      await updateUserState(telegramId, { current_stage: 'METHODOLOGY_SHOWN' });
+      const text = 
+`🔬 *HOW WE DO IT | THE WHISPER METHOD*
+
+At Yaga Calls, we replace retail noise with institutional calculations.
+
+We spend our days researching:
+• *Global Innovations*: Tracking where actual developer and venture capital is rotating.
+• *Political & Macro Factors*: Calculating how interest rates and regulations shift liquidity.
+• *Corporate Whispers*: Hearing the intentional steps of major whales and market makers.
+
+We analyze all of this, calculate the invalidation price, and only place trades where the potential reward is at least 3x larger than the risk. If a trade goes against us, we exit cleanly. No hope, no averaging—just math.`;
+
+      await sendMessage(chatId, text, getMethodologyKeyboard());
+    }
+
+    // Show Tailored Proof
+    else if (data === 'show_proof') {
+      const state = await getOrCreateUserState(telegramId, firstName, '');
+      const archetype = state.risk_segment || 'CHART_READER';
+
+      let proofText = '';
+      if (archetype === 'HYPE_HUNTER') {
+        proofText = `Instead of chasing coin pumps after they go viral on Twitter, we trace on-chain smart money movements weeks in advance. For example, during the AI narrative rotation, we calculated the entry price before retail media coverage started, securing clean risk-free returns.`;
+      } else if (archetype === 'CHART_READER') {
+        proofText = `We don't draw arbitrary retail lines. We wait for structural deviations (like a sweep of macro BTC liquidity). Once major whales step in, we enter alongside them with a tight stop-loss.`;
+      } else {
+        proofText = `We provide complete transparency. Every trade setup we share has a detailed technical chart and a narrative thesis explaining the exact logic, so you can learn while you grow.`;
+      }
+
+      await updateUserState(telegramId, { current_stage: 'PROOF_SHOWN' });
+
+      const text = 
+`📈 *REAL-WORLD PROOF*
+
+Here is how our methodology works in practice:
+
+${proofText}
+
+We log every single trade setup—both our successes and our losses—honestly in our verified performance ledger. You can audit our history at any time.`;
 
       await sendMessage(chatId, text, getCloseKeyboard());
     }
 
-    // Stage 5 Transition (Empathic Close & Handoffs)
+    // Handoff & Closures
     else if (data === 'close_vip' || data === 'close_consultation') {
-      const choice = data === 'close_vip' ? 'VIP Access' : 'Custom Consultation';
+      const type = data === 'close_vip' ? 'VIP Access' : 'Custom Consultation';
       await updateUserState(telegramId, { current_stage: 'CLOSE_INITIATED' });
 
       const text = 
-`Wonderful choice, *${firstName}*. I’ve prepared a custom profile for you based on our conversation.
+`🤝 *Manually Connecting You to Our Desk*
 
-I'm putting you in touch with our Desk Director, who will manually set up your access or answer any final questions you have. No bots, no automated checkouts—just real humans who care about your capital.
+Excellent choice, *${firstName}*. I have logged your diagnostic profile in our database.
 
-Click the button below to message our Desk directly. They already know your name and profile!`;
+I am putting you in touch with our Desk Director. No automated checkouts, no sales bots—just real professionals who will review your goals and set up your access manually.
+
+Tap the button below to message our Desk directly. We already know your name and diagnostic profile!`;
 
       await sendMessage(chatId, text, getHandoffKeyboard());
     }
@@ -241,27 +321,24 @@ Click the button below to message our Desk directly. They already know your name
     else if (data === 'close_free') {
       await updateUserState(telegramId, { current_stage: 'COMPLETED' });
       const text = 
-`I completely respect that, *${firstName}*. Take all the time you need to observe our desk from the free group.
+`Understood, *${firstName}*. Take all the time you need to watch our desk from the free channel.
 
-I've registered your profile, and I'll send you a brief Sunday 'Market Pulse' safety check-in once a week to keep you updated on narrative changes. 
+I will send you a brief, 3-bullet *Market Pulse* safety update every Sunday evening to keep you updated on macro rotations and capital flow changes. 
 
-If you ever want to upgrade or ask a question, simply type a message here or contact @yagacalls47. Have a safe and successful trading week!`;
+If you ever want to run your diagnostic average again or upgrade, just type a message here or contact @yagacalls47. Have a safe and profitable week!`;
       await sendMessage(chatId, text);
     }
   }
 }
 
 // ── CONCIERGE AUTOMATED NURTURE & OUTREACH ENGINE ──
-// Auto-nudge user if they drop off mid-onboarding or go inactive
-
 async function runAutoNudgeAndOutreach() {
   console.log('⏳ Running Concierge Nurture & Outreach check...');
   try {
     // 1. Onboarding Drop-off Recovery (Auto-Nudge after 30 minutes of inactivity)
-    // Select users stuck in WELCOME, DECONSTRUCT_NOISE, or CUSTOMIZATION_LAYER updated between 30 mins and 2 hours ago
     const nudgeRes = await queryDb(`
       SELECT * FROM public.concierge_user_states
-      WHERE current_stage IN ('WELCOME', 'DECONSTRUCT_NOISE', 'CUSTOMIZATION_LAYER')
+      WHERE current_stage IN ('WELCOME', 'QUESTION_1', 'QUESTION_2', 'DIAGNOSTIC_REVEALED', 'METHODOLOGY_SHOWN')
         AND updated_at < NOW() - INTERVAL '30 minutes'
         AND updated_at > NOW() - INTERVAL '2 hours'
     `);
@@ -269,23 +346,20 @@ async function runAutoNudgeAndOutreach() {
     for (const u of nudgeRes.rows) {
       console.log(`✉️ Sending 30-minute drop-off recovery nudge to: ${u.first_name} (${u.telegram_id})`);
       const nudgeText = 
-`Hey *${u.first_name}*, I know you're busy! I saved your progress right here. 
+`Hey *${u.first_name}*, I know you're busy! I saved your progress in our alignment test right here.
 
-Tap the link below or send me a reply whenever you have a quiet moment to review your custom trading profile:`;
+Tap the button below to resume your test and unlock your profile case study:`;
       await sendMessage(u.telegram_id, nudgeText, getWelcomeKeyboard());
-      
-      // Update stage so we don't nudge them repeatedly
-      await updateUserState(u.telegram_id, { current_stage: 'CLOSE_INITIATED' }); // Move state forward to skip future loops
+      await updateUserState(u.telegram_id, { current_stage: 'CLOSE_INITIATED' }); 
     }
 
     // 2. Inactive User Empathy Pulse (Outreach check after 14 days)
-    // Select users who completed/closed onboarding but haven't interacted in 14 days and haven't had re-engagement sent recently
     const outreachRes = await queryDb(`
       SELECT * FROM public.concierge_user_states
       WHERE (current_stage = 'COMPLETED' OR current_stage = 'CLOSE_INITIATED')
         AND updated_at < NOW() - INTERVAL '14 days'
         AND (reengagement_sent_at IS NULL OR reengagement_sent_at < NOW() - INTERVAL '30 days')
-      LIMIT 10 -- Safety check limits batches to prevent rate limits
+      LIMIT 10
     `);
 
     for (const u of outreachRes.rows) {
@@ -322,9 +396,41 @@ server.listen(PORT, () => {
   console.log(`🚀 Client Relation API Health Check running on http://localhost:${PORT}`);
 });
 
+// Enforce branding name and info programmatically on startup
+async function enforceBotBranding() {
+  try {
+    const namePayload = { name: "Yaga Client Relation" };
+    const descPayload = { description: "Configure your market approach, run your trading alignment test, and speak directly to our professional intelligence desk." };
+    const shortDescPayload = { short_description: "Professional alignment & client relation engine for Yaga Calls." };
+
+    await fetch(`${API_BASE}/setMyName`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(namePayload)
+    });
+    
+    await fetch(`${API_BASE}/setMyDescription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(descPayload)
+    });
+
+    await fetch(`${API_BASE}/setMyShortDescription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(shortDescPayload)
+    });
+
+    console.log('✅ Bot profile descriptions and branding successfully synchronized programmatically.');
+  } catch (err) {
+    console.error('Branding synchronization warning:', err.message);
+  }
+}
+
 // Polling updates loop
 let offset = 0;
 async function pollUpdates() {
+  await enforceBotBranding();
   console.log(`🤖 Yaga Client Relation Bot Active! Polling updates...`);
   const allowedUpdates = JSON.stringify(["message", "callback_query"]);
 
