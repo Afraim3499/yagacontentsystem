@@ -1,6 +1,6 @@
 // ====================================================================
 // YAGA CALLS CLIENT RELATION BOT — Conversational & Outreach Engine
-// Implements an interactive "Trading Archetype Test" conversion funnel
+// Implements an interactive 6-question "Trading Archetype Test" funnel
 // Runs standalone or via PM2: node concierge_bot_engine.js
 // ====================================================================
 
@@ -61,8 +61,8 @@ async function getOrCreateUserState(telegramId, firstName, username) {
   }
 
   const insertRes = await queryDb(`
-    INSERT INTO public.concierge_user_states (telegram_id, first_name, username, current_stage)
-    VALUES ($1, $2, $3, 'WELCOME')
+    INSERT INTO public.concierge_user_states (telegram_id, first_name, username, current_stage, archetype_score)
+    VALUES ($1, $2, $3, 'WELCOME', 0)
     RETURNING *
   `, [telegramId, firstName, username]);
   return insertRes.rows[0];
@@ -86,7 +86,7 @@ async function updateUserState(telegramId, fields) {
   `, params);
 }
 
-// Keyboards for Gamified Archetype Funnel
+// Keyboards for Gamified Archetype Funnel (6 Questions)
 function getWelcomeKeyboard() {
   return {
     inline_keyboard: [
@@ -98,9 +98,9 @@ function getWelcomeKeyboard() {
 function getQuestion1Keyboard() {
   return {
     inline_keyboard: [
-      [{ text: '📊 Technical charts and indicator lines', callback_data: 'q1_charts' }],
-      [{ text: '📰 Breaking news headlines and twitter chatter', callback_data: 'q1_news' }],
-      [{ text: '🔄 Following trade calls from social groups', callback_data: 'q1_groups' }]
+      [{ text: '🔄 I scalp daily (quick in-and-out)', callback_data: 'q1_scalp' }],
+      [{ text: '📈 I swing trade (holding days/weeks)', callback_data: 'q1_swing' }],
+      [{ text: '💎 I hold long-term (spot investor)', callback_data: 'q1_invest' }]
     ]
   };
 }
@@ -108,9 +108,49 @@ function getQuestion1Keyboard() {
 function getQuestion2Keyboard() {
   return {
     inline_keyboard: [
-      [{ text: '😰 I hold and hope it recovers to break-even', callback_data: 'q2_hope' }],
-      [{ text: '😡 I double-down to lower my entry price', callback_data: 'q2_double' }],
-      [{ text: '🛡️ My stop-loss exits immediately (I feel safe)', callback_data: 'q2_safe' }]
+      [{ text: '💵 I only trade Spot (No leverage)', callback_data: 'q2_spot' }],
+      [{ text: '⚡ Moderate Leverage (2x - 5x)', callback_data: 'q2_med_lev' }],
+      [{ text: '🔥 High Leverage Futures (10x+)', callback_data: 'q2_high_lev' }]
+    ]
+  };
+}
+
+function getQuestion3Keyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📊 Indicator lines and chart setups', callback_data: 'q3_charts' }],
+      [{ text: '📰 News headlines & Twitter trends', callback_data: 'q3_hype' }],
+      [{ text: '🔔 Alerts and copy trade groups', callback_data: 'q3_signals' }]
+    ]
+  };
+}
+
+function getQuestion4Keyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '🛡️ Strict stop-loss hits (I exit red)', callback_data: 'q4_stop' }],
+      [{ text: '😰 Hold & hope it returns to break-even', callback_data: 'q4_hope' }],
+      [{ text: '😡 Average down to lower entry average', callback_data: 'q4_average' }]
+    ]
+  };
+}
+
+function getQuestion5Keyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '😰 Exit early out of fear it will reverse', callback_data: 'q5_early' }],
+      [{ text: '🤷 I let it run but have no exit target', callback_data: 'q5_noplan' }],
+      [{ text: '🎯 Exit cleanly at predefined targets', callback_data: 'q5_targets' }]
+    ]
+  };
+}
+
+function getQuestion6Keyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📉 Recover my previous losses', callback_data: 'q6_recover' }],
+      [{ text: '💵 Generate consistent monthly income', callback_data: 'q6_income' }],
+      [{ text: '💎 Compounding long-term wealth safely', callback_data: 'q6_wealth' }]
     ]
   };
 }
@@ -162,7 +202,7 @@ async function handleUpdate(update) {
 
     if (text.startsWith('/start')) {
       await getOrCreateUserState(telegramId, firstName, username);
-      await updateUserState(telegramId, { current_stage: 'WELCOME' });
+      await updateUserState(telegramId, { current_stage: 'WELCOME', archetype_score: 0 });
 
       const welcomeText = 
 `👑 *YAGA CALLS | CLIENT RELATION DESK*
@@ -173,7 +213,7 @@ I am not a basic system assistant. I am here to help you configure your market a
 
 Before we look at charts or numbers, we need to understand your trading psychology. 
 
-Let's run a quick, 1-minute *Trading Alignment Test* to map your market archetype and identify where your capital might be leaking.`;
+Let's run a quick, 6-question *Trading Alignment Test* to map your market archetype and identify where your capital might be leaking.`;
 
       await sendMessage(chatId, welcomeText, getWelcomeKeyboard());
     } else {
@@ -191,62 +231,148 @@ Let's run a quick, 1-minute *Trading Alignment Test* to map your market archetyp
 
     // Start Test -> Question 1
     if (data === 'start_test') {
-      await updateUserState(telegramId, { current_stage: 'QUESTION_1' });
+      await updateUserState(telegramId, { current_stage: 'QUESTION_1', archetype_score: 0 });
       const text = 
-`⚡ *STAGE 1: THE INITIATION*
+`📊 *QUESTION 1: TIME HORIZON*
 
-Let's look at how you make decisions.
-
-When you decide to buy a coin or open a position, what is the primary factor that drives your choice?`;
+How would you describe your typical trading frequency and holding style?`;
       await sendMessage(chatId, text, getQuestion1Keyboard());
     }
 
-    // Question 1 Answers -> Question 2
+    // Q1 Answers -> Question 2
     else if (data.startsWith('q1_')) {
       const choice = data.replace('q1_', '');
+      const score = choice === 'scalp' ? 3 : (choice === 'swing' ? 2 : 1);
+      
       await updateUserState(telegramId, { 
         current_stage: 'QUESTION_2',
-        risk_segment: choice === 'charts' ? 'CHART_READER' : (choice === 'news' ? 'HYPE_HUNTER' : 'SOCIAL_FOLLOWER')
+        archetype_score: score
       });
 
       const text = 
-`⚡ *STAGE 2: THE REACTION*
+`📊 *QUESTION 2: DEBT & LEVERAGE*
 
-Got it. Now let's look at how you handle risk.
-
-Imagine you enter a trade, and the price immediately goes against you by *5%*. What is your realistic response?`;
+What risk and leverage levels do you normally use in your trading accounts?`;
       await sendMessage(chatId, text, getQuestion2Keyboard());
     }
 
-    // Question 2 Answers -> Diagnostic
+    // Q2 Answers -> Question 3
     else if (data.startsWith('q2_')) {
       const choice = data.replace('q2_', '');
+      const score = choice === 'high_lev' ? 3 : (choice === 'med_lev' ? 2 : 1);
       const state = await getOrCreateUserState(telegramId, firstName, '');
-      const archetype = state.risk_segment || 'TRADER';
+      const currentScore = Number(state.archetype_score || 0);
 
+      await updateUserState(telegramId, { 
+        current_stage: 'QUESTION_3',
+        archetype_score: currentScore + score
+      });
+
+      const text = 
+`📊 *QUESTION 3: ENTRY CATALYSTS*
+
+When you decide to open a position, what is the primary trigger that makes you buy?`;
+      await sendMessage(chatId, text, getQuestion3Keyboard());
+    }
+
+    // Q3 Answers -> Question 4
+    else if (data.startsWith('q3_')) {
+      const choice = data.replace('q3_', '');
+      const score = choice === 'hype' ? 3 : (choice === 'charts' ? 2 : 1);
+      const state = await getOrCreateUserState(telegramId, firstName, '');
+      const currentScore = Number(state.archetype_score || 0);
+
+      await updateUserState(telegramId, { 
+        current_stage: 'QUESTION_4',
+        archetype_score: currentScore + score
+      });
+
+      const text = 
+`📊 *QUESTION 4: RED TRADES (RISK)*
+
+If a trade goes against you immediately by *5%*, what is your typical response?`;
+      await sendMessage(chatId, text, getQuestion4Keyboard());
+    }
+
+    // Q4 Answers -> Question 5
+    else if (data.startsWith('q4_')) {
+      const choice = data.replace('q4_', '');
+      const score = choice === 'average' ? 3 : (choice === 'hope' ? 2 : 1);
+      const state = await getOrCreateUserState(telegramId, firstName, '');
+      const currentScore = Number(state.archetype_score || 0);
+
+      await updateUserState(telegramId, { 
+        current_stage: 'QUESTION_5',
+        archetype_score: currentScore + score
+      });
+
+      const text = 
+`📊 *QUESTION 5: GREEN TRADES (PROFIT)*
+
+Once your position goes into profit, how do you manage the trade to exit?`;
+      await sendMessage(chatId, text, getQuestion5Keyboard());
+    }
+
+    // Q5 Answers -> Question 6
+    else if (data.startsWith('q5_')) {
+      const choice = data.replace('q5_', '');
+      const score = choice === 'noplan' ? 3 : (choice === 'early' ? 2 : 1);
+      const state = await getOrCreateUserState(telegramId, firstName, '');
+      const currentScore = Number(state.archetype_score || 0);
+
+      await updateUserState(telegramId, { 
+        current_stage: 'QUESTION_6',
+        archetype_score: currentScore + score
+      });
+
+      const text = 
+`📊 *QUESTION 6: PORTFOLIO OBJECTIVES*
+
+What is the main goal you are trying to accomplish with your capital right now?`;
+      await sendMessage(chatId, text, getQuestion6Keyboard());
+    }
+
+    // Q6 Answers -> Diagnostic Reveal
+    else if (data.startsWith('q6_')) {
+      const choice = data.replace('q6_', '');
+      const score = choice === 'recover' ? 3 : (choice === 'income' ? 2 : 1);
+      const state = await getOrCreateUserState(telegramId, firstName, '');
+      const totalScore = Number(state.archetype_score || 0) + score;
+
+      let archetype = '';
       let diagnosticTitle = '';
       let diagnosticBody = '';
+      let lossPainFlag = true;
 
-      if (choice === 'hope') {
-        diagnosticTitle = 'THE HOPEFUL HOLDER';
-        diagnosticBody = `You hate taking losses. When a trade goes red, your brain blocks out the risk and tells you to wait. This emotional bias is exactly how retail traders turn a small 5% stop-loss into a permanent 80% portfolio drawdown. It is exhausting and drains your confidence.`;
-      } else if (choice === 'double') {
-        diagnosticTitle = 'THE RISK MULTIPLIER';
-        diagnosticBody = `You double-down to lower your entry average. While this can work in ranging markets, it exposes you to massive capital liquidation when a real narrative trend breaks down. You are fighting the market trend instead of respecting it.`;
+      // Score classification
+      if (totalScore <= 10) {
+        archetype = 'SILENT_BLEEDER';
+        diagnosticTitle = 'THE SILENT BLEEDER';
+        diagnosticBody = `You prefer safer trading parameters (spot or swing trading), but your capital slowly drains away because you hold losing positions too long hoping they break even, while cutting your winning setups too early out of fear.`;
+        lossPainFlag = true;
+      } else if (totalScore <= 14) {
+        archetype = 'WANDERING_RETAILER';
+        diagnosticTitle = 'THE WANDERING RETAILER';
+        diagnosticBody = `You trade based on news trends, chatroom alerts, or indicator setups, but you lack a consistent strategy. You exit early due to market swings and feel frustrated because you keep missing the real trend rotations.`;
+        lossPainFlag = true;
       } else {
-        diagnosticTitle = 'THE STRUCTURED OBSERVER';
-        diagnosticBody = `You respect stop-losses, which is a great start. However, if your decision engine is still based on noisy Twitter chatter or retail indicators, you are simply exiting valid trades early because you don't have deep narrative conviction.`;
+        archetype = 'LEVERAGED_GAMBLER';
+        diagnosticTitle = 'THE LEVERAGED GAMBLER';
+        diagnosticBody = `You chase high-leverage futures and average down on losses. While this can provide quick wins, it exposes you to sudden account liquidation. You are constantly fighting the market trend and feeling under pressure.`;
+        lossPainFlag = true;
       }
 
       await updateUserState(telegramId, { 
         current_stage: 'DIAGNOSTIC_REVEALED',
-        loss_pain: choice !== 'safe'
+        archetype_score: totalScore,
+        risk_segment: archetype,
+        loss_pain: lossPainFlag
       });
 
       const text = 
-`🔍 *YOUR MARKET ARCHETYPE: ${diagnosticTitle}*
+`🔍 *TEST OUTCOME: ${diagnosticTitle}*
 
-*${firstName}*, here is what our calculations show:
+*${firstName}*, here is what our calculations reveal:
 
 ${diagnosticBody}
 
@@ -276,12 +402,12 @@ We analyze all of this, calculate the invalidation price, and only place trades 
     // Show Tailored Proof
     else if (data === 'show_proof') {
       const state = await getOrCreateUserState(telegramId, firstName, '');
-      const archetype = state.risk_segment || 'CHART_READER';
+      const archetype = state.risk_segment || 'WANDERING_RETAILER';
 
       let proofText = '';
-      if (archetype === 'HYPE_HUNTER') {
+      if (archetype === 'WANDERING_RETAILER') {
         proofText = `Instead of chasing coin pumps after they go viral on Twitter, we trace on-chain smart money movements weeks in advance. For example, during the AI narrative rotation, we calculated the entry price before retail media coverage started, securing clean risk-free returns.`;
-      } else if (archetype === 'CHART_READER') {
+      } else if (archetype === 'SILENT_BLEEDER') {
         proofText = `We don't draw arbitrary retail lines. We wait for structural deviations (like a sweep of macro BTC liquidity). Once major whales step in, we enter alongside them with a tight stop-loss.`;
       } else {
         proofText = `We provide complete transparency. Every trade setup we share has a detailed technical chart and a narrative thesis explaining the exact logic, so you can learn while you grow.`;
@@ -303,7 +429,6 @@ We log every single trade setup—both our successes and our losses—honestly i
 
     // Handoff & Closures
     else if (data === 'close_vip' || data === 'close_consultation') {
-      const type = data === 'close_vip' ? 'VIP Access' : 'Custom Consultation';
       await updateUserState(telegramId, { current_stage: 'CLOSE_INITIATED' });
 
       const text = 
@@ -338,7 +463,7 @@ async function runAutoNudgeAndOutreach() {
     // 1. Onboarding Drop-off Recovery (Auto-Nudge after 30 minutes of inactivity)
     const nudgeRes = await queryDb(`
       SELECT * FROM public.concierge_user_states
-      WHERE current_stage IN ('WELCOME', 'QUESTION_1', 'QUESTION_2', 'DIAGNOSTIC_REVEALED', 'METHODOLOGY_SHOWN')
+      WHERE current_stage IN ('WELCOME', 'QUESTION_1', 'QUESTION_2', 'QUESTION_3', 'QUESTION_4', 'QUESTION_5', 'QUESTION_6', 'DIAGNOSTIC_REVEALED', 'METHODOLOGY_SHOWN')
         AND updated_at < NOW() - INTERVAL '30 minutes'
         AND updated_at > NOW() - INTERVAL '2 hours'
     `);
