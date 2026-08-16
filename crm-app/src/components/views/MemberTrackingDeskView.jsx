@@ -42,6 +42,7 @@ export default function MemberTrackingDeskView() {
   const [selectedTier, setSelectedTier] = useState("ALL"); // ALL | FREE_ONLY | PAID_VIP
   const [selectedMonth, setSelectedMonth] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
+  const [sortOrder, setSortOrder] = useState("LATEST"); // LATEST | OLDEST | PKG_DESC | PKG_ASC
 
   // New Associate Modal State
   const [isAddAssociateModalOpen, setIsAddAssociateModalOpen] = useState(false);
@@ -80,7 +81,7 @@ export default function MemberTrackingDeskView() {
   // Reset to Page 1 whenever search or filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus, itemsPerPage]);
+  }, [searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus, itemsPerPage, sortOrder]);
 
   // Fetch Data from Supabase concurrently across ranges
   const fetchData = async () => {
@@ -332,7 +333,7 @@ export default function MemberTrackingDeskView() {
 
   // Filtered Members Log Data
   const filteredLog = useMemo(() => {
-    return membersLog.filter(item => {
+    const filtered = membersLog.filter(item => {
       const searchLower = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm || 
         item.telegram_user_id?.toLowerCase().includes(searchLower) ||
@@ -348,7 +349,24 @@ export default function MemberTrackingDeskView() {
 
       return matchesSearch && matchesAssociate && matchesTier && matchesMonth && matchesStatus;
     });
-  }, [membersLog, searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus]);
+
+    return [...filtered].sort((a, b) => {
+      if (sortOrder === 'LATEST') {
+        const timeA = new Date(a.paid_group_joined_at || a.free_group_joined_at || a.created_at);
+        const timeB = new Date(b.paid_group_joined_at || b.free_group_joined_at || b.created_at);
+        return timeB - timeA;
+      } else if (sortOrder === 'OLDEST') {
+        const timeA = new Date(a.paid_group_joined_at || a.free_group_joined_at || a.created_at);
+        const timeB = new Date(b.paid_group_joined_at || b.free_group_joined_at || b.created_at);
+        return timeA - timeB;
+      } else if (sortOrder === 'PKG_DESC') {
+        return Number(b.paid_subscription_value || 0) - Number(a.paid_subscription_value || 0);
+      } else if (sortOrder === 'PKG_ASC') {
+        return Number(a.paid_subscription_value || 0) - Number(b.paid_subscription_value || 0);
+      }
+      return 0;
+    });
+  }, [membersLog, searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus, sortOrder]);
 
   // Paginated Data (100 members per page)
   const totalPages = Math.ceil(filteredLog.length / itemsPerPage) || 1;
@@ -526,7 +544,7 @@ export default function MemberTrackingDeskView() {
         {activeTab === "MEMBERS_LOG" && (
           <div className="space-y-5">
             {/* Multi-Filter Controls */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 bg-[#080a0f] p-4 rounded-2xl border border-white/10">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 bg-[#080a0f] p-4 rounded-2xl border border-white/10">
               <div className="relative">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                 <input
@@ -586,6 +604,19 @@ export default function MemberTrackingDeskView() {
                   <option value="ALL">⚡ All Member Status</option>
                   <option value="ACTIVE">✅ Active in Group</option>
                   <option value="LEFT">🔴 Left Group</option>
+                </select>
+              </div>
+
+              <div>
+                <select
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value)}
+                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer"
+                >
+                  <option value="LATEST">📅 Latest Joined</option>
+                  <option value="OLDEST">📅 Oldest Joined</option>
+                  <option value="PKG_DESC">💰 Highest to Lowest Package</option>
+                  <option value="PKG_ASC">💰 Lowest to Highest Package</option>
                 </select>
               </div>
             </div>

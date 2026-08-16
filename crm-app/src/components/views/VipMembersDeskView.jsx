@@ -38,6 +38,7 @@ export default function VipMembersDeskView() {
   const [selectedAssociate, setSelectedAssociate] = useState("ALL");
   const [selectedPackage, setSelectedPackage] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL"); // ALL | ACTIVE | EXPIRING_SOON | EXPIRED
+  const [sortOrder, setSortOrder] = useState("LATEST"); // LATEST | OLDEST | PKG_DESC | PKG_ASC
 
   // Manual VIP Enroll Modal State
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
@@ -108,7 +109,7 @@ export default function VipMembersDeskView() {
 
   // Filtered VIP Members
   const filteredVips = useMemo(() => {
-    return vipMembers.filter(m => {
+    const filtered = vipMembers.filter(m => {
       const search = searchTerm.toLowerCase().trim();
       const matchesSearch = !search || 
         (m.first_name && m.first_name.toLowerCase().includes(search)) ||
@@ -130,7 +131,24 @@ export default function VipMembersDeskView() {
 
       return matchesSearch && matchesAssociate && matchesPackage && matchesStatus;
     });
-  }, [vipMembers, searchTerm, selectedAssociate, selectedPackage, selectedStatus]);
+
+    return [...filtered].sort((a, b) => {
+      if (sortOrder === 'LATEST') {
+        const timeA = new Date(a.paid_group_joined_at || a.created_at);
+        const timeB = new Date(b.paid_group_joined_at || b.created_at);
+        return timeB - timeA;
+      } else if (sortOrder === 'OLDEST') {
+        const timeA = new Date(a.paid_group_joined_at || a.created_at);
+        const timeB = new Date(b.paid_group_joined_at || b.created_at);
+        return timeA - timeB;
+      } else if (sortOrder === 'PKG_DESC') {
+        return Number(b.paid_subscription_value || 0) - Number(a.paid_subscription_value || 0);
+      } else if (sortOrder === 'PKG_ASC') {
+        return Number(a.paid_subscription_value || 0) - Number(b.paid_subscription_value || 0);
+      }
+      return 0;
+    });
+  }, [vipMembers, searchTerm, selectedAssociate, selectedPackage, selectedStatus, sortOrder]);
 
   // Overall Stat Calculations
   const stats = useMemo(() => {
@@ -517,6 +535,17 @@ export default function VipMembersDeskView() {
             <option value="350">$350 (Half-Yearly)</option>
             <option value="700">$700 (Yearly)</option>
             <option value="CUSTOM">Custom Tier</option>
+          </select>
+
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value)}
+            className="bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-medium px-3 py-2 rounded-xl focus:outline-none focus:border-amber-500/50"
+          >
+            <option value="LATEST">📅 Latest Joined</option>
+            <option value="OLDEST">📅 Oldest Joined</option>
+            <option value="PKG_DESC">💰 Highest to Lowest Package</option>
+            <option value="PKG_ASC">💰 Lowest to Highest Package</option>
           </select>
         </div>
       </div>
