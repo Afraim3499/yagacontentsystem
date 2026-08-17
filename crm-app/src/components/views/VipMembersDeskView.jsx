@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { supabase } from '../../lib/supabase';
 import { 
   Crown, 
@@ -27,7 +28,7 @@ import {
   Edit
 } from 'lucide-react';
 import { useConfirm } from '../ConfirmDialogProvider';
-import Pagination, { usePagination } from '../Pagination';
+import { SkeletonTableRows } from '../Skeleton';
 
 export default function VipMembersDeskView() {
   const confirm = useConfirm();
@@ -170,10 +171,24 @@ export default function VipMembersDeskView() {
     });
   }, [vipMembers, searchTerm, selectedAssociate, selectedPackage, selectedStatus, sortOrder]);
 
-  // Bound the DOM to one page of rows at a time — filteredVips can run into
-  // the thousands, and rendering all of them into <tr>s at once is a real
-  // scroll/perf problem.
-  const { currentPage, setCurrentPage, itemsPerPage, setItemsPerPage, totalPages, pageItems: paginatedVips } = usePagination(filteredVips);
+  // Virtualize the roster table body — filteredVips can run into the
+  // thousands, and only the rows actually scrolled into view are ever
+  // mounted in the DOM. Uses the "spacer <tr>" windowing technique (real
+  // <table>/<tr>/<td> markup throughout, no position:absolute on table
+  // rows) since absolutely-positioned <tr> elements are unreliable across
+  // browsers inside native table layout.
+  const tableScrollRef = useRef(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filteredVips.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 88,
+    overscan: 8,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const virtualPaddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const virtualPaddingBottom = virtualRows.length > 0
+    ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+    : 0;
 
   // Overall Stat Calculations
   const stats = useMemo(() => {
@@ -578,21 +593,6 @@ export default function VipMembersDeskView() {
       {/* Main VIP Roster Table */}
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl shadow-xl overflow-hidden backdrop-blur-md">
         {loading ? (
-          <div className="p-16 flex flex-col items-center justify-center gap-3 text-slate-400">
-            <Loader2 className="w-8 h-8 animate-spin text-amber-400" />
-            <span className="text-sm">Loading High Table VIP Roster...</span>
-          </div>
-        ) : filteredVips.length === 0 ? (
-          <div className="p-16 text-center text-slate-400 space-y-3">
-            <Crown className="w-10 h-10 text-slate-600 mx-auto stroke-[1.5]" />
-            <div className="text-base font-medium text-slate-300">No VIP Members Found</div>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              {searchTerm || selectedAssociate !== "ALL" || selectedPackage !== "ALL" || selectedStatus !== "ALL"
-                ? "Try adjusting your search terms or dropdown filters."
-                : "Enroll your first VIP member using the button above!"}
-            </p>
-          </div>
-        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -607,7 +607,42 @@ export default function VipMembersDeskView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-sm">
-                {paginatedVips.map((m) => {
+                <SkeletonTableRows columns={7} rows={8} />
+              </tbody>
+            </table>
+          </div>
+        ) : filteredVips.length === 0 ? (
+          <div className="p-16 text-center text-slate-400 space-y-3">
+            <Crown className="w-10 h-10 text-slate-600 mx-auto stroke-[1.5]" />
+            <div className="text-base font-medium text-slate-300">No VIP Members Found</div>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              {searchTerm || selectedAssociate !== "ALL" || selectedPackage !== "ALL" || selectedStatus !== "ALL"
+                ? "Try adjusting your search terms or dropdown filters."
+                : "Enroll your first VIP member using the button above!"}
+            </p>
+          </div>
+        ) : (
+          <div ref={tableScrollRef} className="overflow-auto max-h-[70vh]">
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 z-10 bg-slate-950">
+                <tr className="border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                  <th scope="col" className="py-3.5 px-4">Member Info</th>
+                  <th scope="col" className="py-3.5 px-4">Referred Associate</th>
+                  <th scope="col" className="py-3.5 px-4">Package & Duration</th>
+                  <th scope="col" className="py-3.5 px-4">Joined & Expiration Date</th>
+                  <th scope="col" className="py-3.5 px-4">Status</th>
+                  <th scope="col" className="py-3.5 px-4">Commissions (5% / 25%)</th>
+                  <th scope="col" className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 text-sm">
+                {virtualPaddingTop > 0 && (
+                  <tr aria-hidden="true" style={{ height: `${virtualPaddingTop}px` }}>
+                    <td colSpan={7} style={{ padding: 0, border: 'none' }} />
+                  </tr>
+                )}
+                {virtualRows.map((virtualRow) => {
+                  const m = filteredVips[virtualRow.index];
                   const val = Number(m.paid_subscription_value || 0);
                   const comm = Number(m.paid_commission || (val * 0.05));
                   const kabComm = Number(m.kabidul_commission || (val * 0.25));
@@ -618,7 +653,12 @@ export default function VipMembersDeskView() {
                   const expDate = m.subscription_expiration_date ? new Date(m.subscription_expiration_date) : null;
 
                   return (
-                    <tr key={m.id} className="hover:bg-slate-800/30 transition-colors group">
+                    <tr
+                      key={m.id}
+                      data-index={virtualRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      className="hover:bg-slate-800/30 transition-colors group"
+                    >
                       {/* Member Info */}
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
@@ -737,6 +777,11 @@ export default function VipMembersDeskView() {
                     </tr>
                   );
                 })}
+                {virtualPaddingBottom > 0 && (
+                  <tr aria-hidden="true" style={{ height: `${virtualPaddingBottom}px` }}>
+                    <td colSpan={7} style={{ padding: 0, border: 'none' }} />
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -744,15 +789,9 @@ export default function VipMembersDeskView() {
       </div>
 
       {!loading && filteredVips.length > 0 && (
-        <Pagination
-          currentPage={currentPage}
-          setCurrentPage={setCurrentPage}
-          totalPages={totalPages}
-          itemsPerPage={itemsPerPage}
-          setItemsPerPage={setItemsPerPage}
-          totalCount={filteredVips.length}
-          itemLabel="VIP members"
-        />
+        <p className="text-center text-[11px] text-slate-500 font-mono py-2">
+          Showing all {filteredVips.length} VIP members — scroll to load more rows
+        </p>
       )}
 
       {/* --- LIVE EDIT VIP MEMBER MODAL --- */}

@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-virtual": "^3.14.9",
     "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.27.0",
     "pg": "^8.22.0",

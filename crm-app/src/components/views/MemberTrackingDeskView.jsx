@@ -27,6 +27,7 @@ import {
   Settings
 } from 'lucide-react';
 import { useConfirm } from '../ConfirmDialogProvider';
+import { SkeletonTableRows } from '../Skeleton';
 
 export default function MemberTrackingDeskView() {
   const confirm = useConfirm();
@@ -663,9 +664,24 @@ export default function MemberTrackingDeskView() {
 
             {/* Data Table */}
             {loading ? (
-              <div className="flex items-center justify-center py-16">
-                <Loader2 className="w-8 h-8 text-[#e39e2e] animate-spin" />
-                <span className="ml-3 text-sm text-slate-400">Loading member tracking log...</span>
+              <div className="overflow-x-auto rounded-2xl border border-white/10">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
+                    <tr>
+                      <th scope="col" className="p-3.5">Member ID & Name</th>
+                      <th scope="col" className="p-3.5">Associate Attribution</th>
+                      <th scope="col" className="p-3.5">Member Tier</th>
+                      <th scope="col" className="p-3.5">VIP Package & Revenue ($)</th>
+                      <th scope="col" className="p-3.5">Free Comm ($30/100)</th>
+                      <th scope="col" className="p-3.5">Paid 5% Comm ($)</th>
+                      <th scope="col" className="p-3.5">Joined Timestamps</th>
+                      <th scope="col" className="p-3.5">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 font-mono">
+                    <SkeletonTableRows columns={8} rows={8} cellClassName="p-3.5" />
+                  </tbody>
+                </table>
               </div>
             ) : filteredLog.length === 0 ? (
               <div className="py-16 text-center text-slate-500 space-y-2">

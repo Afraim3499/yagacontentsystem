@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import Pagination, { usePagination } from '../Pagination';
+import { SkeletonTableRows } from '../Skeleton';
 
 export default function AffiliatesDeskView() {
   const [affiliates, setAffiliates] = useState([]);
@@ -409,7 +410,28 @@ export default function AffiliatesDeskView() {
             </div>
 
             {loading ? (
-              <div className="p-12 text-center text-slate-400 text-xs font-mono">Loading affiliate records...</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
+                    <tr>
+                      <th scope="col" className="px-6 py-3.5">Partner</th>
+                      <th scope="col" className="px-6 py-3.5">Type</th>
+                      <th scope="col" className="px-6 py-3.5">Telegram Handle</th>
+                      <th scope="col" className="px-6 py-3.5">Invite Link</th>
+                      <th scope="col" className="px-6 py-3.5">Rate</th>
+                      <th scope="col" className="px-6 py-3.5">Free Joinees</th>
+                      <th scope="col" className="px-6 py-3.5">Sales</th>
+                      <th scope="col" className="px-6 py-3.5">Total Earned</th>
+                      <th scope="col" className="px-6 py-3.5">Total Paid</th>
+                      <th scope="col" className="px-6 py-3.5">Unpaid Balance</th>
+                      <th scope="col" className="px-6 py-3.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono">
+                    <SkeletonTableRows columns={11} rows={8} />
+                  </tbody>
+                </table>
+              </div>
             ) : filteredAffiliates.length === 0 ? (
               <div className="p-12 text-center text-slate-500 text-xs font-mono">No affiliate records match your filter criteria.</div>
             ) : (

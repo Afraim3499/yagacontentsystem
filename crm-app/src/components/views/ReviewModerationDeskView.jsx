@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import { useConfirm } from "../ConfirmDialogProvider";
+import { SkeletonCardGrid } from "../Skeleton";
 
 // Initialize Supabase Client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://ghwvwtwktnveqdqivxmy.supabase.co";
@@ -336,10 +337,7 @@ export default function ReviewModerationDeskView() {
         /* TAB CONTENT: REVIEW QUEUE GRID */
         <div className="space-y-4">
           {loading ? (
-            <div className="text-center py-16 space-y-4">
-              <Loader2 className="w-8 h-8 animate-spin text-[#e39e2e] mx-auto" />
-              <p className="text-xs font-mono text-slate-400">Fetching review entries from Supabase...</p>
-            </div>
+            <SkeletonCardGrid count={4} />
           ) : filteredReviews.length === 0 ? (
             <div className="glass-panel p-12 text-center space-y-3">
               <Star className="w-12 h-12 text-slate-600 mx-auto" />

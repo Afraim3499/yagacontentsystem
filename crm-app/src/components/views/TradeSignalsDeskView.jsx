@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { useConfirm } from '../ConfirmDialogProvider';
 import Pagination, { usePagination } from '../Pagination';
+import { SkeletonTableRows } from '../Skeleton';
 
 export default function TradeSignalsDeskView() {
   const confirm = useConfirm();
@@ -653,9 +654,23 @@ export default function TradeSignalsDeskView() {
       {/* Main Signal Roster Table */}
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl shadow-xl overflow-hidden backdrop-blur-md">
         {loading ? (
-          <div className="p-16 flex flex-col items-center justify-center gap-3 text-slate-400">
-            <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
-            <span className="text-sm">Loading Trade Signal Roster...</span>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                  <th scope="col" className="py-3.5 px-4">Symbol & Setup Chart</th>
+                  <th scope="col" className="py-3.5 px-4">Target Group</th>
+                  <th scope="col" className="py-3.5 px-4">Entry / TP / SL / Lev</th>
+                  <th scope="col" className="py-3.5 px-4">Custom Notes</th>
+                  <th scope="col" className="py-3.5 px-4">Status & PnL %</th>
+                  <th scope="col" className="py-3.5 px-4">Date Posted</th>
+                  <th scope="col" className="py-3.5 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 text-sm">
+                <SkeletonTableRows columns={7} rows={8} />
+              </tbody>
+            </table>
           </div>
         ) : filteredSignals.length === 0 ? (
           <div className="p-16 text-center text-slate-400 space-y-3">

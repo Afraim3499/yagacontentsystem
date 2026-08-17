@@ -25,6 +25,7 @@ import {
   UserPlus,
   AlertTriangle
 } from 'lucide-react';
+import { SkeletonCardList } from '../Skeleton';
 
 // Platform Character & Headline Limits Table
 const PLATFORM_LIMITS = {
@@ -616,10 +617,7 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 text-[#e39e2e] animate-spin" />
-            <span className="ml-3 text-sm text-slate-400">Loading content from Supabase...</span>
-          </div>
+          <SkeletonCardList count={3} />
         ) : contentRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-slate-500 space-y-4">
             <FileText className="w-12 h-12 text-slate-600" />

@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { 
   Activity, Filter, Search, RefreshCw, CheckCircle2, AlertTriangle, Send, UserPlus, ShieldAlert, Clock, Layers, Loader2
 } from 'lucide-react';
+import { SkeletonTableRows } from '../Skeleton';
 
 export default function ActivityLogsView({ creators = [], platforms = [] }) {
   const [logs, setLogs] = useState([]);
@@ -149,9 +150,21 @@ export default function ActivityLogsView({ creators = [], platforms = [] }) {
       {/* Logs Table */}
       <div className="glass-panel p-6 space-y-4 border border-white/10">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-8 h-8 text-[#38bdf8] animate-spin" />
-            <span className="ml-3 text-sm text-slate-400">Loading audit stream...</span>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
+                <tr>
+                  <th scope="col" className="p-3">Log ID</th>
+                  <th scope="col" className="p-3">Event Type</th>
+                  <th scope="col" className="p-3">User / System</th>
+                  <th scope="col" className="p-3">Log Message</th>
+                  <th scope="col" className="p-3">Timestamp</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 font-mono">
+                <SkeletonTableRows columns={5} rows={8} cellClassName="p-3" />
+              </tbody>
+            </table>
           </div>
         ) : filteredLogs.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-sm">
