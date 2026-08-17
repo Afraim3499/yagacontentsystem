@@ -26,9 +26,11 @@ import {
   X,
   Edit
 } from 'lucide-react';
+import { useConfirm } from '../ConfirmDialogProvider';
 import Pagination, { usePagination } from '../Pagination';
 
 export default function VipMembersDeskView() {
+  const confirm = useConfirm();
   const [vipMembers, setVipMembers] = useState([]);
   const [associates, setAssociates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -374,7 +376,7 @@ export default function VipMembersDeskView() {
 
   // Delete Member Handler
   async function handleDeleteMember(memberId, name) {
-    if (!window.confirm(`⚠️ Are you sure you want to delete VIP member "${name}"?`)) return;
+    if (!(await confirm(`⚠️ Are you sure you want to delete VIP member "${name}"?`))) return;
 
     const { error } = await supabase.from('community_members_log').delete().eq('id', memberId);
     if (error) {

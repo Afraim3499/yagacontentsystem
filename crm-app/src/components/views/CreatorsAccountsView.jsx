@@ -4,8 +4,10 @@ import {
   Users, ShieldCheck, KeyRound, CheckCircle2, ExternalLink, Plus, Search, Lock,
   Eye, EyeOff, Edit3, Save, Trash2, X, UserPlus, Loader2, ToggleLeft, ToggleRight, Crown, Shield
 } from 'lucide-react';
+import { useConfirm } from '../ConfirmDialogProvider';
 
 export default function CreatorsAccountsView({ creators: initialCreators, owners: initialOwners = [], accounts: initialAccounts, platforms, onRefreshData }) {
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState("CREATORS");
   const [creators, setCreators] = useState(initialCreators);
   const [owners, setOwners] = useState(initialOwners);
@@ -110,7 +112,7 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
 
   // ── DELETE CREATOR ──
   const deleteCreator = async (creatorId) => {
-    if (!confirm(`Delete creator ${creatorId}? This removes their voice profile and unlinks all accounts.`)) return;
+    if (!(await confirm(`Delete creator ${creatorId}? This removes their voice profile and unlinks all accounts.`))) return;
     const { error: voiceDelError } = await supabase.from('voice_profiles').delete().eq('creator_id', creatorId);
     if (voiceDelError) {
       console.error('Delete voice profile error:', voiceDelError);
@@ -224,7 +226,7 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
 
   // ── DELETE OWNER ──
   const deleteOwner = async (ownerId) => {
-    if (!confirm(`Delete owner record ${ownerId}? They will stop receiving Telegram broadcast alerts.`)) return;
+    if (!(await confirm(`Delete owner record ${ownerId}? They will stop receiving Telegram broadcast alerts.`))) return;
     const { error } = await supabase.from('owners').delete().eq('id', ownerId);
     if (error) {
       console.error('Delete owner error:', error);

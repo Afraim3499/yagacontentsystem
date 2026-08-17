@@ -3,8 +3,10 @@ import { supabase } from '../../lib/supabase';
 import { 
   BookOpen, Layers, CheckCircle2, ShieldAlert, Plus, Edit3, Trash2, Save, X, ExternalLink, KeyRound, Loader2
 } from 'lucide-react';
+import { useConfirm } from '../ConfirmDialogProvider';
 
 export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) {
+  const confirm = useConfirm();
   const [platforms, setPlatforms] = useState(initialPlatforms);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -98,7 +100,7 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
   };
 
   const handleDeletePlatform = async (platformId) => {
-    if (!confirm(`Delete platform ${platformId}? This will remove it from CRM dispatch.`)) return;
+    if (!(await confirm(`Delete platform ${platformId}? This will remove it from CRM dispatch.`))) return;
     const { error } = await supabase.from('platforms').delete().eq('id', platformId);
     if (error) {
       console.error('Delete platform error:', error);

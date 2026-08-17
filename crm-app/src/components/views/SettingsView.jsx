@@ -3,8 +3,10 @@ import { supabase } from '../../lib/supabase';
 import { 
   Settings, KeyRound, ShieldAlert, Cpu, Bell, Database, CheckCircle2, Lock, Eye, EyeOff, Save, RefreshCw, Crown, Plus, Trash2, Loader2
 } from 'lucide-react';
+import { useConfirm } from '../ConfirmDialogProvider';
 
 export default function SettingsView({ systemSettings, owners = [], onSaveSettings }) {
+  const confirm = useConfirm();
   const [formState, setFormState] = useState({ ...systemSettings });
   const [isSaving, setIsSaving] = useState(false);
   const [showAnonKey, setShowAnonKey] = useState(false);
@@ -59,7 +61,7 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
   };
 
   const handleDeleteOwner = async (ownerId) => {
-    if (!confirm(`Remove owner ${ownerId}?`)) return;
+    if (!(await confirm(`Remove owner ${ownerId}?`))) return;
     const { error } = await supabase.from('owners').delete().eq('id', ownerId);
     if (error) {
       console.error('Delete owner error:', error);

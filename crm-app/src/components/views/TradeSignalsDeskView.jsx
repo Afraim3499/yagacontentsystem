@@ -25,9 +25,11 @@ import {
   Layers,
   Calendar
 } from 'lucide-react';
+import { useConfirm } from '../ConfirmDialogProvider';
 import Pagination, { usePagination } from '../Pagination';
 
 export default function TradeSignalsDeskView() {
+  const confirm = useConfirm();
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -447,7 +449,7 @@ export default function TradeSignalsDeskView() {
 
   // Delete Signal Handler
   async function handleDeleteSignal(id, symbol) {
-    if (!window.confirm(`⚠️ Are you sure you want to delete trade signal "$${symbol}"?`)) return;
+    if (!(await confirm(`⚠️ Are you sure you want to delete trade signal "$${symbol}"?`))) return;
 
     const { error } = await supabase.from('trade_signals_log').delete().eq('id', id);
     if (error) {

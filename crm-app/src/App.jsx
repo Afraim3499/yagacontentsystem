@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import CrmLockScreen from './components/CrmLockScreen';
+import { ConfirmDialogProvider } from './components/ConfirmDialogProvider';
 
 // Each desk view is only fetched when its tab is actually opened, instead
 // of all 16 views (plus their charting/table dependencies) being bundled
@@ -341,9 +342,10 @@ export default function App() {
   }
 
   return (
+    <ConfirmDialogProvider>
     <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Top Fixed Navbar */}
-      <Navbar 
+      <Navbar
         systemSettings={systemSettings} 
         activeBatch={dailyBatch}
         mobileMenuOpen={mobileMenuOpen}
@@ -472,5 +474,6 @@ export default function App() {
         </main>
       </div>
     </div>
+    </ConfirmDialogProvider>
   );
 }

@@ -16,6 +16,7 @@ import {
   ExternalLink
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
+import { useConfirm } from "../ConfirmDialogProvider";
 
 // Initialize Supabase Client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://ghwvwtwktnveqdqivxmy.supabase.co";
@@ -23,6 +24,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIU
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function ReviewModerationDeskView() {
+  const confirm = useConfirm();
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("PENDING"); // 'PENDING', 'APPROVED', 'DECLINED', 'INVITE_GENERATOR'
@@ -95,7 +97,7 @@ export default function ReviewModerationDeskView() {
   };
 
   const handleDeleteReview = async (id) => {
-    if (!confirm("Are you sure you want to delete this review entry?")) return;
+    if (!(await confirm("Are you sure you want to delete this review entry?"))) return;
     setActionLoading(id);
     try {
       await supabase.from("reviews").delete().eq("id", id);

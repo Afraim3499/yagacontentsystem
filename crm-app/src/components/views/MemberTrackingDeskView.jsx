@@ -26,8 +26,10 @@ import {
   Tag,
   Settings
 } from 'lucide-react';
+import { useConfirm } from '../ConfirmDialogProvider';
 
 export default function MemberTrackingDeskView() {
+  const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState("MEMBERS_LOG"); // MEMBERS_LOG | ASSOCIATES_VAULT | SETTINGS_VAULT
   const [membersLog, setMembersLog] = useState([]);
   const [associates, setAssociates] = useState([]);
@@ -270,7 +272,7 @@ export default function MemberTrackingDeskView() {
 
   // Delete Package
   const handleDeletePackage = async (pkgId) => {
-    if (!confirm('Delete this VIP package tier?')) return;
+    if (!(await confirm('Delete this VIP package tier?'))) return;
     const { error } = await supabase.from('vip_packages').delete().eq('id', pkgId);
     if (error) {
       console.error('Delete package error:', error);
@@ -282,7 +284,7 @@ export default function MemberTrackingDeskView() {
 
   // Delete Member Entry
   const handleDeleteMember = async (memberLogId, memberName) => {
-    if (!confirm(`Are you sure you want to delete member log entry for "${memberName}"?`)) return;
+    if (!(await confirm(`Are you sure you want to delete member log entry for "${memberName}"?`))) return;
     try {
       const { error } = await supabase.from('community_members_log').delete().eq('id', memberLogId);
       if (error) throw error;
