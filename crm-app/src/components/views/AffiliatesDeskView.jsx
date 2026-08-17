@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { supabase } from '../../lib/supabase';
-import Pagination, { usePagination } from '../Pagination';
 import { SkeletonTableRows } from '../Skeleton';
 
 export default function AffiliatesDeskView() {
@@ -228,17 +228,35 @@ export default function AffiliatesDeskView() {
     return matchesSearch;
   });
 
-  // Bound the DOM to one page of rows at a time instead of rendering every
-  // filtered partner at once.
-  const { currentPage, setCurrentPage, itemsPerPage, setItemsPerPage, totalPages, pageItems: paginatedAffiliates } = usePagination(filteredAffiliates);
-  const {
-    currentPage: logsPage,
-    setCurrentPage: setLogsPage,
-    itemsPerPage: logsPerPage,
-    setItemsPerPage: setLogsPerPage,
-    totalPages: logsTotalPages,
-    pageItems: paginatedPayoutLogs,
-  } = usePagination(payoutLogs);
+  // Virtualize both tables' bodies — same "spacer <tr>" windowing technique
+  // used and verified on the VIP Members desk: real <table>/<tr>/<td>
+  // markup throughout, dynamic row-height measurement, no
+  // position:absolute on table rows.
+  const rosterScrollRef = useRef(null);
+  const rosterVirtualizer = useVirtualizer({
+    count: filteredAffiliates.length,
+    getScrollElement: () => rosterScrollRef.current,
+    estimateSize: () => 60,
+    overscan: 8,
+  });
+  const rosterVirtualRows = rosterVirtualizer.getVirtualItems();
+  const rosterPaddingTop = rosterVirtualRows.length > 0 ? rosterVirtualRows[0].start : 0;
+  const rosterPaddingBottom = rosterVirtualRows.length > 0
+    ? rosterVirtualizer.getTotalSize() - rosterVirtualRows[rosterVirtualRows.length - 1].end
+    : 0;
+
+  const logsScrollRef = useRef(null);
+  const logsVirtualizer = useVirtualizer({
+    count: payoutLogs.length,
+    getScrollElement: () => logsScrollRef.current,
+    estimateSize: () => 56,
+    overscan: 8,
+  });
+  const logsVirtualRows = logsVirtualizer.getVirtualItems();
+  const logsPaddingTop = logsVirtualRows.length > 0 ? logsVirtualRows[0].start : 0;
+  const logsPaddingBottom = logsVirtualRows.length > 0
+    ? logsVirtualizer.getTotalSize() - logsVirtualRows[logsVirtualRows.length - 1].end
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -435,9 +453,9 @@ export default function AffiliatesDeskView() {
             ) : filteredAffiliates.length === 0 ? (
               <div className="p-12 text-center text-slate-500 text-xs font-mono">No affiliate records match your filter criteria.</div>
             ) : (
-              <div className="overflow-x-auto">
+              <div ref={rosterScrollRef} className="overflow-auto max-h-[70vh]">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
+                  <thead className="sticky top-0 z-10 bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
                     <tr>
                       <th scope="col" className="px-6 py-3.5">Partner</th>
                       <th scope="col" className="px-6 py-3.5">Type</th>
@@ -453,8 +471,20 @@ export default function AffiliatesDeskView() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono">
-                    {paginatedAffiliates.map(aff => (
-                      <tr key={aff.id} className="hover:bg-slate-800/40 transition-colors">
+                    {rosterPaddingTop > 0 && (
+                      <tr aria-hidden="true" style={{ height: `${rosterPaddingTop}px` }}>
+                        <td colSpan={11} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
+                    {rosterVirtualRows.map((virtualRow) => {
+                      const aff = filteredAffiliates[virtualRow.index];
+                      return (
+                      <tr
+                        key={aff.id}
+                        data-index={virtualRow.index}
+                        ref={rosterVirtualizer.measureElement}
+                        className="hover:bg-slate-800/40 transition-colors"
+                      >
                         <td className="px-6 py-4 font-bold text-white font-sans">
                           {aff.name || aff.id}
                           <div className="text-[10px] font-mono font-normal text-slate-500">{aff.id}</div>
@@ -516,21 +546,21 @@ export default function AffiliatesDeskView() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
+                    {rosterPaddingBottom > 0 && (
+                      <tr aria-hidden="true" style={{ height: `${rosterPaddingBottom}px` }}>
+                        <td colSpan={11} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
             )}
             {filteredAffiliates.length > 0 && (
-              <Pagination
-                currentPage={currentPage}
-                setCurrentPage={setCurrentPage}
-                totalPages={totalPages}
-                itemsPerPage={itemsPerPage}
-                setItemsPerPage={setItemsPerPage}
-                totalCount={filteredAffiliates.length}
-                itemLabel="partners"
-              />
+              <p className="text-center text-[11px] text-slate-500 font-mono py-2">
+                Showing all {filteredAffiliates.length} partners — scroll to load more rows
+              </p>
             )}
           </div>
         </>
@@ -545,9 +575,9 @@ export default function AffiliatesDeskView() {
           {payoutLogs.length === 0 ? (
             <div className="p-12 text-center text-slate-500 text-xs font-mono">No payout logs recorded yet.</div>
           ) : (
-            <div className="overflow-x-auto">
+            <div ref={logsScrollRef} className="overflow-auto max-h-[70vh]">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
+                <thead className="sticky top-0 z-10 bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
                   <tr>
                     <th scope="col" className="px-6 py-3.5">Date &amp; Time (UTC)</th>
                     <th scope="col" className="px-6 py-3.5">Payment ID</th>
@@ -560,10 +590,21 @@ export default function AffiliatesDeskView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
-                  {paginatedPayoutLogs.map(log => {
+                  {logsPaddingTop > 0 && (
+                    <tr aria-hidden="true" style={{ height: `${logsPaddingTop}px` }}>
+                      <td colSpan={8} style={{ padding: 0, border: 'none' }} />
+                    </tr>
+                  )}
+                  {logsVirtualRows.map((virtualRow) => {
+                    const log = payoutLogs[virtualRow.index];
                     const dateStr = new Date(log.created_at).toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
                     return (
-                      <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
+                      <tr
+                        key={log.id}
+                        data-index={virtualRow.index}
+                        ref={logsVirtualizer.measureElement}
+                        className="hover:bg-slate-800/40 transition-colors"
+                      >
                         <td className="px-6 py-4 font-bold text-slate-300">{dateStr}</td>
                         <td className="px-6 py-4 text-slate-400">{log.id}</td>
                         <td className="px-6 py-4 font-bold text-white font-sans">{log.partner_name} ({log.partner_id})</td>
@@ -581,20 +622,19 @@ export default function AffiliatesDeskView() {
                       </tr>
                     );
                   })}
+                  {logsPaddingBottom > 0 && (
+                    <tr aria-hidden="true" style={{ height: `${logsPaddingBottom}px` }}>
+                      <td colSpan={8} style={{ padding: 0, border: 'none' }} />
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           )}
           {payoutLogs.length > 0 && (
-            <Pagination
-              currentPage={logsPage}
-              setCurrentPage={setLogsPage}
-              totalPages={logsTotalPages}
-              itemsPerPage={logsPerPage}
-              setItemsPerPage={setLogsPerPage}
-              totalCount={payoutLogs.length}
-              itemLabel="transactions"
-            />
+            <p className="text-center text-[11px] text-slate-500 font-mono py-2">
+              Showing all {payoutLogs.length} transactions — scroll to load more rows
+            </p>
           )}
         </div>
       )}

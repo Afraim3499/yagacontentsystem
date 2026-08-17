@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { supabase } from '../../lib/supabase';
 import { 
   TrendingUp, 
@@ -26,7 +27,6 @@ import {
   Calendar
 } from 'lucide-react';
 import { useConfirm } from '../ConfirmDialogProvider';
-import Pagination, { usePagination } from '../Pagination';
 import { SkeletonTableRows } from '../Skeleton';
 
 export default function TradeSignalsDeskView() {
@@ -211,7 +211,22 @@ export default function TradeSignalsDeskView() {
 
   // Bound the DOM to one page of rows at a time instead of rendering every
   // filtered signal at once.
-  const { currentPage, setCurrentPage, itemsPerPage, setItemsPerPage, totalPages, pageItems: paginatedSignals } = usePagination(filteredSignals);
+  // Virtualize the signal roster table body — same "spacer <tr>" windowing
+  // technique used and verified on the VIP Members desk: real
+  // <table>/<tr>/<td> markup throughout, dynamic row-height measurement,
+  // no position:absolute on table rows.
+  const tableScrollRef = useRef(null);
+  const rowVirtualizer = useVirtualizer({
+    count: filteredSignals.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 88,
+    overscan: 8,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const virtualPaddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const virtualPaddingBottom = virtualRows.length > 0
+    ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+    : 0;
 
   // Image Upload to Supabase Storage
   async function handleFileUpload(e, setUrlState) {
@@ -683,10 +698,10 @@ export default function TradeSignalsDeskView() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div ref={tableScrollRef} className="overflow-auto max-h-[70vh]">
             <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <thead className="sticky top-0 z-10 bg-slate-950">
+                <tr className="border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                   <th scope="col" className="py-3.5 px-4">Symbol & Setup Chart</th>
                   <th scope="col" className="py-3.5 px-4">Target Group</th>
                   <th scope="col" className="py-3.5 px-4">Entry / TP / SL / Lev</th>
@@ -697,13 +712,24 @@ export default function TradeSignalsDeskView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-sm">
-                {paginatedSignals.map((s) => {
+                {virtualPaddingTop > 0 && (
+                  <tr aria-hidden="true" style={{ height: `${virtualPaddingTop}px` }}>
+                    <td colSpan={7} style={{ padding: 0, border: 'none' }} />
+                  </tr>
+                )}
+                {virtualRows.map((virtualRow) => {
+                  const s = filteredSignals[virtualRow.index];
                   const pnl = Number(s.pnl_percentage || 0);
                   const isWin = pnl > 0;
                   const isActive = s.status === 'ACTIVE';
 
                   return (
-                    <tr key={s.id} className="hover:bg-slate-800/30 transition-colors group">
+                    <tr
+                      key={s.id}
+                      data-index={virtualRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      className="hover:bg-slate-800/30 transition-colors group"
+                    >
                       {/* Symbol & Image */}
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
@@ -829,6 +855,11 @@ export default function TradeSignalsDeskView() {
                     </tr>
                   );
                 })}
+                {virtualPaddingBottom > 0 && (
+                  <tr aria-hidden="true" style={{ height: `${virtualPaddingBottom}px` }}>
+                    <td colSpan={7} style={{ padding: 0, border: 'none' }} />
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -836,15 +867,9 @@ export default function TradeSignalsDeskView() {
       </div>
 
       {!loading && filteredSignals.length > 0 && (
-        <Pagination
-          currentPage={currentPage}
-          setCurrentPage={setCurrentPage}
-          totalPages={totalPages}
-          itemsPerPage={itemsPerPage}
-          setItemsPerPage={setItemsPerPage}
-          totalCount={filteredSignals.length}
-          itemLabel="signals"
-        />
+        <p className="text-center text-[11px] text-slate-500 font-mono py-2">
+          Showing all {filteredSignals.length} signals — scroll to load more rows
+        </p>
       )}
 
       {/* --- CREATE NEW TRADE SIGNAL MODAL --- */}

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { supabase } from '../../lib/supabase';
 import { 
   Users, 
@@ -82,14 +83,9 @@ export default function MemberTrackingDeskView() {
     setTimeout(() => setToast({ show: false, message: '', isError: false }), 4000);
   };
 
-  // Pagination State (100 members per page)
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(100);
-
-  // Reset to Page 1 whenever search or filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus, itemsPerPage, sortOrder]);
+  // Table body scroll container, used by the row virtualizer set up below
+  // (near filteredLog) — declared up top so hooks stay in one place.
+  const memberTableScrollRef = useRef(null);
 
   // Fetch Data from Supabase concurrently across ranges
   const fetchData = async () => {
@@ -409,12 +405,23 @@ export default function MemberTrackingDeskView() {
     });
   }, [membersLog, searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus, sortOrder]);
 
-  // Paginated Data (100 members per page)
-  const totalPages = Math.ceil(filteredLog.length / itemsPerPage) || 1;
-  const paginatedLog = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredLog.slice(start, start + itemsPerPage);
-  }, [filteredLog, currentPage, itemsPerPage]);
+  // Virtualize the member log table body — same "spacer <tr>" windowing
+  // technique used and verified on the VIP Members desk: real
+  // <table>/<tr>/<td> markup throughout, dynamic row-height measurement,
+  // no position:absolute on table rows. Replaces the old 100-row-per-page
+  // pagination bar with a real scroll, since virtualization means every
+  // filtered row is always reachable by scrolling instead of paging.
+  const memberRowVirtualizer = useVirtualizer({
+    count: filteredLog.length,
+    getScrollElement: () => memberTableScrollRef.current,
+    estimateSize: () => 76,
+    overscan: 8,
+  });
+  const memberVirtualRows = memberRowVirtualizer.getVirtualItems();
+  const memberPaddingTop = memberVirtualRows.length > 0 ? memberVirtualRows[0].start : 0;
+  const memberPaddingBottom = memberVirtualRows.length > 0
+    ? memberRowVirtualizer.getTotalSize() - memberVirtualRows[memberVirtualRows.length - 1].end
+    : 0;
 
   // Summary Metrics Calculations
   const freeMembersCount = membersLog.filter(m => m.member_tier === 'FREE_ONLY' || !m.member_tier).length;
@@ -690,10 +697,10 @@ export default function MemberTrackingDeskView() {
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto rounded-2xl border border-white/10">
+                <div ref={memberTableScrollRef} className="overflow-auto max-h-[70vh] rounded-2xl border border-white/10">
 
                 <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
+                  <thead className="sticky top-0 z-10 bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
                     <tr>
                       <th scope="col" className="p-3.5">Member ID & Name</th>
                       <th scope="col" className="p-3.5">Associate Attribution</th>
@@ -706,12 +713,23 @@ export default function MemberTrackingDeskView() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 font-mono">
-                    {paginatedLog.map((item) => {
+                    {memberPaddingTop > 0 && (
+                      <tr aria-hidden="true" style={{ height: `${memberPaddingTop}px` }}>
+                        <td colSpan={8} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
+                    {memberVirtualRows.map((virtualRow) => {
+                      const item = filteredLog[virtualRow.index];
                       const totalComm = (Number(item.free_commission || 0.30) + Number(item.paid_commission || 0)).toFixed(2);
                       const isVip = item.member_tier === 'PAID_VIP';
 
                       return (
-                        <tr key={item.id} className="hover:bg-[#121722] transition-colors">
+                        <tr
+                          key={item.id}
+                          data-index={virtualRow.index}
+                          ref={memberRowVirtualizer.measureElement}
+                          className="hover:bg-[#121722] transition-colors"
+                        >
                           <td className="p-3.5 font-sans">
                             <div className="font-bold text-white text-xs">{item.first_name || 'Member'}</div>
                             <div className="text-[10px] text-[#38bdf8] font-mono">ID: {item.telegram_user_id} {item.telegram_handle}</div>
@@ -774,76 +792,18 @@ export default function MemberTrackingDeskView() {
                         </tr>
                       );
                     })}
+                    {memberPaddingBottom > 0 && (
+                      <tr aria-hidden="true" style={{ height: `${memberPaddingBottom}px` }}>
+                        <td colSpan={8} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
 
-              {/* 100-ROW PAGINATION CONTROLS BAR */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#080a0f] p-4 rounded-2xl border border-white/10 text-xs">
-                <div className="text-slate-400 font-mono">
-                  Showing <span className="text-white font-bold">{filteredLog.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</span> to <span className="text-white font-bold">{Math.min(currentPage * itemsPerPage, filteredLog.length)}</span> of <span className="text-[#e39e2e] font-bold">{filteredLog.length}</span> members
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap justify-center">
-                  <button
-                    onClick={() => setCurrentPage(1)}
-                    disabled={currentPage === 1}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
-                    title="First Page"
-                  >
-                    « First
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
-                  >
-                    ‹ Prev
-                  </button>
-
-                  <div className="flex items-center gap-1 mx-2">
-                    <span className="text-slate-400 font-mono">Page</span>
-                    <select
-                      value={currentPage}
-                      onChange={(e) => setCurrentPage(Number(e.target.value))}
-                      className="bg-[#121722] text-[#e39e2e] font-bold font-mono px-2 py-1 rounded-lg border border-[#e39e2e]/40 focus:outline-none cursor-pointer"
-                    >
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-slate-400 font-mono">of {totalPages}</span>
-                  </div>
-
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
-                  >
-                    Next ›
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(totalPages)}
-                    disabled={currentPage === totalPages}
-                    className="px-2.5 py-1.5 rounded-lg bg-[#121722] hover:bg-[#1a2130] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-[11px] border border-white/10"
-                    title="Last Page"
-                  >
-                    Last »
-                  </button>
-
-                  <select
-                    value={itemsPerPage}
-                    onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                    className="ml-3 bg-[#121722] text-slate-300 font-mono text-[11px] px-2 py-1.5 rounded-lg border border-white/10 cursor-pointer"
-                  >
-                    <option value={100}>100 per page</option>
-                    <option value={250}>250 per page</option>
-                    <option value={500}>500 per page</option>
-                  </select>
-                </div>
-              </div>
+              <p className="text-center text-[11px] text-slate-500 font-mono py-2">
+                Showing all {filteredLog.length} members — scroll to load more rows
+              </p>
             </>
           )}
 
