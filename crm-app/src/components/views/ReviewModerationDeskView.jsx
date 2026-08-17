@@ -302,8 +302,8 @@ export default function ReviewModerationDeskView() {
 
           <div className="space-y-4 text-xs font-bold">
             <div className="space-y-1.5">
-              <label className="text-slate-300 uppercase tracking-wider block">Customer First Name</label>
-              <input
+              <label htmlFor="reviewmoderationdeskview-field-1" className="text-slate-300 uppercase tracking-wider block">Customer First Name</label>
+              <input id="reviewmoderationdeskview-field-1"
                 type="text"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
@@ -506,8 +506,8 @@ export default function ReviewModerationDeskView() {
 
             <form onSubmit={handleSaveEdit} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Author Name *</label>
-                <input
+                <label htmlFor="reviewmoderationdeskview-field-2" className="text-slate-300 font-bold uppercase tracking-wider block">Author Name *</label>
+                <input id="reviewmoderationdeskview-field-2"
                   type="text"
                   required
                   value={editName}
@@ -518,8 +518,8 @@ export default function ReviewModerationDeskView() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Handle</label>
-                  <input
+                  <label htmlFor="reviewmoderationdeskview-field-3" className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Handle</label>
+                  <input id="reviewmoderationdeskview-field-3"
                     type="text"
                     value={editHandle}
                     onChange={(e) => setEditHandle(e.target.value)}
@@ -529,8 +529,8 @@ export default function ReviewModerationDeskView() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Star Rating</label>
-                  <select
+                  <label htmlFor="reviewmoderationdeskview-field-4" className="text-slate-300 font-bold uppercase tracking-wider block">Star Rating</label>
+                  <select id="reviewmoderationdeskview-field-4"
                     value={editRating}
                     onChange={(e) => setEditRating(e.target.value)}
                     className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none"
@@ -545,8 +545,8 @@ export default function ReviewModerationDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Member Tier Tag</label>
-                <select
+                <label htmlFor="reviewmoderationdeskview-field-5" className="text-slate-300 font-bold uppercase tracking-wider block">Member Tier Tag</label>
+                <select id="reviewmoderationdeskview-field-5"
                   value={editTier}
                   onChange={(e) => setEditTier(e.target.value)}
                   className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none"
@@ -559,8 +559,8 @@ export default function ReviewModerationDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Review Title *</label>
-                <input
+                <label htmlFor="reviewmoderationdeskview-field-6" className="text-slate-300 font-bold uppercase tracking-wider block">Review Title *</label>
+                <input id="reviewmoderationdeskview-field-6"
                   type="text"
                   required
                   value={editTitle}
@@ -570,8 +570,8 @@ export default function ReviewModerationDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Review Body Content *</label>
-                <textarea
+                <label htmlFor="reviewmoderationdeskview-field-7" className="text-slate-300 font-bold uppercase tracking-wider block">Review Body Content *</label>
+                <textarea id="reviewmoderationdeskview-field-7"
                   required
                   rows={4}
                   value={editContent}

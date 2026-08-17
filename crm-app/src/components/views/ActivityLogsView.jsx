@@ -162,11 +162,11 @@ export default function ActivityLogsView({ creators = [], platforms = [] }) {
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
                 <tr>
-                  <th className="p-3">Log ID</th>
-                  <th className="p-3">Event Type</th>
-                  <th className="p-3">User / System</th>
-                  <th className="p-3">Log Message</th>
-                  <th className="p-3">Timestamp</th>
+                  <th scope="col" className="p-3">Log ID</th>
+                  <th scope="col" className="p-3">Event Type</th>
+                  <th scope="col" className="p-3">User / System</th>
+                  <th scope="col" className="p-3">Log Message</th>
+                  <th scope="col" className="p-3">Timestamp</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 font-mono">

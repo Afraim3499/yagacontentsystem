@@ -13,6 +13,12 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState({ show: false, message: '', isError: false });
+
+  const showToast = (message, isError = false) => {
+    setToast({ show: true, message, isError });
+    setTimeout(() => setToast({ show: false, message: '', isError: false }), 4000);
+  };
 
   // New Owner Form State
   const [isAddOwnerModalOpen, setIsAddOwnerModalOpen] = useState(false);
@@ -45,14 +51,15 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
   const saveCreator = async (creatorId) => {
     setSaving(true);
     try {
-      await supabase.from('creators').update({
+      const { error: creatorError } = await supabase.from('creators').update({
         public_name: editForm.publicName,
         real_name: editForm.realName,
         title: editForm.title,
         email: editForm.email || null,
       }).eq('id', creatorId);
+      if (creatorError) throw creatorError;
 
-      await supabase.from('voice_profiles').upsert({
+      const { error: voiceError } = await supabase.from('voice_profiles').upsert({
         creator_id: creatorId,
         tone: editForm.tone,
         sentence_length: editForm.sentenceLength,
@@ -60,6 +67,7 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
         humor: editForm.humor,
         cta_style: editForm.ctaStyle,
       }, { onConflict: 'creator_id' });
+      if (voiceError) throw voiceError;
 
       setCreators(prev => prev.map(c => {
         if (c.id === creatorId) {
@@ -84,21 +92,37 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
       setEditingId(null);
     } catch (err) {
       console.error('Save creator error:', err);
+      showToast(`❌ Failed to save creator: ${err.message || err}`, true);
     }
     setSaving(false);
   };
 
   // ── TOGGLE CREATOR ACTIVE ──
   const toggleActive = async (creatorId, currentActive) => {
-    await supabase.from('creators').update({ active: !currentActive }).eq('id', creatorId);
+    const { error } = await supabase.from('creators').update({ active: !currentActive }).eq('id', creatorId);
+    if (error) {
+      console.error('Toggle creator active error:', error);
+      showToast(`❌ Failed to update status: ${error.message}`, true);
+      return;
+    }
     setCreators(prev => prev.map(c => c.id === creatorId ? { ...c, active: !currentActive } : c));
   };
 
   // ── DELETE CREATOR ──
   const deleteCreator = async (creatorId) => {
     if (!confirm(`Delete creator ${creatorId}? This removes their voice profile and unlinks all accounts.`)) return;
-    await supabase.from('voice_profiles').delete().eq('creator_id', creatorId);
-    await supabase.from('creators').delete().eq('id', creatorId);
+    const { error: voiceDelError } = await supabase.from('voice_profiles').delete().eq('creator_id', creatorId);
+    if (voiceDelError) {
+      console.error('Delete voice profile error:', voiceDelError);
+      showToast(`❌ Failed to delete creator: ${voiceDelError.message}`, true);
+      return;
+    }
+    const { error: creatorDelError } = await supabase.from('creators').delete().eq('id', creatorId);
+    if (creatorDelError) {
+      console.error('Delete creator error:', creatorDelError);
+      showToast(`❌ Failed to delete creator: ${creatorDelError.message}`, true);
+      return;
+    }
     setCreators(prev => prev.filter(c => c.id !== creatorId));
   };
 
@@ -129,13 +153,21 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
         }
         return c;
       }));
+    } else {
+      console.error('Assign platform error:', error);
+      showToast(`❌ Failed to assign platform: ${error.message}`, true);
     }
   };
 
   // ── REMOVE PLATFORM FROM CREATOR ──
   const removePlatform = async (creatorId, platformId) => {
     const accountId = `AC-${platformId.replace('PL-','')}-${creatorId.replace('CR-','CR')}`;
-    await supabase.from('accounts').delete().eq('id', accountId);
+    const { error } = await supabase.from('accounts').delete().eq('id', accountId);
+    if (error) {
+      console.error('Remove platform error:', error);
+      showToast(`❌ Failed to remove platform: ${error.message}`, true);
+      return;
+    }
     setAccounts(prev => prev.filter(a => a.id !== accountId));
     setCreators(prev => prev.map(c => {
       if (c.id === creatorId) {
@@ -153,12 +185,13 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
 
     const ownerId = `OWN-${Date.now().toString().substring(7)}`;
     try {
-      await supabase.from('owners').upsert({
+      const { error } = await supabase.from('owners').upsert({
         id: ownerId,
         name: newOwnerName.trim(),
         telegram_chat_id: newOwnerChatId.trim(),
         active: true
       }, { onConflict: 'telegram_chat_id' });
+      if (error) throw error;
 
       setOwners(prev => [...prev.filter(o => o.telegram_chat_id !== newOwnerChatId), {
         id: ownerId,
@@ -173,46 +206,62 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
       setIsAddOwnerModalOpen(false);
     } catch (err) {
       console.error('Add owner error:', err);
+      showToast(`❌ Failed to add owner: ${err.message || err}`, true);
     }
     setSaving(false);
   };
 
   // ── TOGGLE OWNER ACTIVE ──
   const toggleOwnerActive = async (ownerId, currentActive) => {
-    await supabase.from('owners').update({ active: !currentActive }).eq('id', ownerId);
+    const { error } = await supabase.from('owners').update({ active: !currentActive }).eq('id', ownerId);
+    if (error) {
+      console.error('Toggle owner active error:', error);
+      showToast(`❌ Failed to update owner: ${error.message}`, true);
+      return;
+    }
     setOwners(prev => prev.map(o => o.id === ownerId ? { ...o, active: !currentActive } : o));
   };
 
   // ── DELETE OWNER ──
   const deleteOwner = async (ownerId) => {
     if (!confirm(`Delete owner record ${ownerId}? They will stop receiving Telegram broadcast alerts.`)) return;
-    await supabase.from('owners').delete().eq('id', ownerId);
+    const { error } = await supabase.from('owners').delete().eq('id', ownerId);
+    if (error) {
+      console.error('Delete owner error:', error);
+      showToast(`❌ Failed to delete owner: ${error.message}`, true);
+      return;
+    }
     setOwners(prev => prev.filter(o => o.id !== ownerId));
   };
 
   // ── EDIT FIELD HELPER ──
-  const EditField = ({ label, field, placeholder, multiline }) => (
-    <div className="space-y-1">
-      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</label>
-      {multiline ? (
-        <textarea
-          rows={2}
-          value={editForm[field] || ''}
-          onChange={(e) => setEditForm(prev => ({ ...prev, [field]: e.target.value }))}
-          placeholder={placeholder}
-          className="w-full bg-[#080a0f] text-slate-100 text-xs p-2.5 rounded-lg border border-white/10 focus:border-[#e39e2e] focus:outline-none resize-none font-sans"
-        />
-      ) : (
-        <input
-          type="text"
-          value={editForm[field] || ''}
-          onChange={(e) => setEditForm(prev => ({ ...prev, [field]: e.target.value }))}
-          placeholder={placeholder}
-          className="w-full bg-[#080a0f] text-slate-100 text-xs p-2.5 rounded-lg border border-white/10 focus:border-[#e39e2e] focus:outline-none font-sans"
-        />
-      )}
-    </div>
-  );
+  const EditField = ({ label, field, placeholder, multiline }) => {
+    const fieldId = `creatorsaccountsview-editfield-${field}`;
+    return (
+      <div className="space-y-1">
+        <label htmlFor={fieldId} className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</label>
+        {multiline ? (
+          <textarea
+            id={fieldId}
+            rows={2}
+            value={editForm[field] || ''}
+            onChange={(e) => setEditForm(prev => ({ ...prev, [field]: e.target.value }))}
+            placeholder={placeholder}
+            className="w-full bg-[#080a0f] text-slate-100 text-xs p-2.5 rounded-lg border border-white/10 focus:border-[#e39e2e] focus:outline-none resize-none font-sans"
+          />
+        ) : (
+          <input
+            id={fieldId}
+            type="text"
+            value={editForm[field] || ''}
+            onChange={(e) => setEditForm(prev => ({ ...prev, [field]: e.target.value }))}
+            placeholder={placeholder}
+            className="w-full bg-[#080a0f] text-slate-100 text-xs p-2.5 rounded-lg border border-white/10 focus:border-[#e39e2e] focus:outline-none font-sans"
+          />
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -500,12 +549,12 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
               <table className="w-full text-left text-xs text-slate-300">
                 <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
                   <tr>
-                    <th className="p-3">Account ID</th>
-                    <th className="p-3">Creator</th>
-                    <th className="p-3">Platform</th>
-                    <th className="p-3">Handle</th>
-                    <th className="p-3">Ready</th>
-                    <th className="p-3">Status</th>
+                    <th scope="col" className="p-3">Account ID</th>
+                    <th scope="col" className="p-3">Creator</th>
+                    <th scope="col" className="p-3">Platform</th>
+                    <th scope="col" className="p-3">Handle</th>
+                    <th scope="col" className="p-3">Ready</th>
+                    <th scope="col" className="p-3">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5 font-mono">
@@ -559,8 +608,8 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
 
             <form onSubmit={handleAddOwner} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Owner Full Name *</label>
-                <input
+                <label htmlFor="creatorsaccountsview-field-1" className="text-slate-300 font-bold uppercase tracking-wider block">Owner Full Name *</label>
+                <input id="creatorsaccountsview-field-1"
                   type="text"
                   required
                   value={newOwnerName}
@@ -571,8 +620,8 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Chat ID *</label>
-                <input
+                <label htmlFor="creatorsaccountsview-field-2" className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Chat ID *</label>
+                <input id="creatorsaccountsview-field-2"
                   type="text"
                   required
                   value={newOwnerChatId}
@@ -592,6 +641,15 @@ export default function CreatorsAccountsView({ creators: initialCreators, owners
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed bottom-6 right-6 z-50 border text-white px-5 py-3 rounded-xl shadow-2xl text-xs font-mono flex items-center gap-3 animate-bounce ${
+          toast.isError ? 'bg-rose-950 border-rose-500' : 'bg-slate-900 border-[#e39e2e]'
+        }`}>
+          <span>{toast.message}</span>
         </div>
       )}
     </div>

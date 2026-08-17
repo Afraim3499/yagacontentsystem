@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
+import Pagination, { usePagination } from '../Pagination';
 
 export default function AffiliatesDeskView() {
   const [affiliates, setAffiliates] = useState([]);
@@ -100,18 +101,20 @@ export default function AffiliatesDeskView() {
     try {
       // 1. Update Supabase table (associates or affiliates)
       if (selectedAffiliate.partner_type === 'ASSOCIATE' || selectedAffiliate.id.startsWith('ASC-')) {
-        await supabase.from('associates').update({ total_paid: newPaid }).eq('id', selectedAffiliate.id);
+        const { error: updateError } = await supabase.from('associates').update({ total_paid: newPaid }).eq('id', selectedAffiliate.id);
+        if (updateError) throw updateError;
       } else {
-        await supabase.from('affiliates').update({
+        const { error: updateError } = await supabase.from('affiliates').update({
           total_paid: newPaid,
           unpaid_balance: newUnpaid,
           updated_at: new Date().toISOString()
         }).eq('id', selectedAffiliate.id);
+        if (updateError) throw updateError;
       }
 
       // 2. Insert Immutable Payout Log Entry with Date & Time
       const payId = `PAY-${Date.now()}`;
-      await supabase.from('payout_logs').insert([{
+      const { error: logError } = await supabase.from('payout_logs').insert([{
         id: payId,
         partner_id: selectedAffiliate.id,
         partner_name: selectedAffiliate.name || selectedAffiliate.first_name,
@@ -122,6 +125,7 @@ export default function AffiliatesDeskView() {
         notes: payoutForm.notes || 'CRM Admin Execution',
         created_at: new Date().toISOString()
       }]);
+      if (logError) throw logError;
 
       // 3. Trigger Telegram Bot Alert via API
       try {
@@ -169,12 +173,13 @@ export default function AffiliatesDeskView() {
       const newTotalEarned = (aff.total_earned || 0) + earnedComm;
       const newUnpaid = (aff.unpaid_balance || 0) + earnedComm;
 
-      await supabase.from('affiliates').update({
+      const { error: conversionError } = await supabase.from('affiliates').update({
         total_conversions: newConversions,
         total_earned: newTotalEarned,
         unpaid_balance: newUnpaid,
         updated_at: new Date().toISOString()
       }).eq('id', aff.id);
+      if (conversionError) throw conversionError;
 
       try {
         await fetch('http://localhost:3005/api/affiliate/conversion', {
@@ -221,6 +226,18 @@ export default function AffiliatesDeskView() {
     if (statusFilter === 'UNPAID') return matchesSearch && Number(aff.unpaid_balance || 0) > 0;
     return matchesSearch;
   });
+
+  // Bound the DOM to one page of rows at a time instead of rendering every
+  // filtered partner at once.
+  const { currentPage, setCurrentPage, itemsPerPage, setItemsPerPage, totalPages, pageItems: paginatedAffiliates } = usePagination(filteredAffiliates);
+  const {
+    currentPage: logsPage,
+    setCurrentPage: setLogsPage,
+    itemsPerPage: logsPerPage,
+    setItemsPerPage: setLogsPerPage,
+    totalPages: logsTotalPages,
+    pageItems: paginatedPayoutLogs,
+  } = usePagination(payoutLogs);
 
   return (
     <div className="space-y-6">
@@ -400,21 +417,21 @@ export default function AffiliatesDeskView() {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
                     <tr>
-                      <th className="px-6 py-3.5">Partner</th>
-                      <th className="px-6 py-3.5">Type</th>
-                      <th className="px-6 py-3.5">Telegram Handle</th>
-                      <th className="px-6 py-3.5">Invite Link</th>
-                      <th className="px-6 py-3.5">Rate</th>
-                      <th className="px-6 py-3.5">Free Joinees</th>
-                      <th className="px-6 py-3.5">Sales</th>
-                      <th className="px-6 py-3.5">Total Earned</th>
-                      <th className="px-6 py-3.5">Total Paid</th>
-                      <th className="px-6 py-3.5">Unpaid Balance</th>
-                      <th className="px-6 py-3.5 text-right">Actions</th>
+                      <th scope="col" className="px-6 py-3.5">Partner</th>
+                      <th scope="col" className="px-6 py-3.5">Type</th>
+                      <th scope="col" className="px-6 py-3.5">Telegram Handle</th>
+                      <th scope="col" className="px-6 py-3.5">Invite Link</th>
+                      <th scope="col" className="px-6 py-3.5">Rate</th>
+                      <th scope="col" className="px-6 py-3.5">Free Joinees</th>
+                      <th scope="col" className="px-6 py-3.5">Sales</th>
+                      <th scope="col" className="px-6 py-3.5">Total Earned</th>
+                      <th scope="col" className="px-6 py-3.5">Total Paid</th>
+                      <th scope="col" className="px-6 py-3.5">Unpaid Balance</th>
+                      <th scope="col" className="px-6 py-3.5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono">
-                    {filteredAffiliates.map(aff => (
+                    {paginatedAffiliates.map(aff => (
                       <tr key={aff.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="px-6 py-4 font-bold text-white font-sans">
                           {aff.name || aff.id}
@@ -482,6 +499,17 @@ export default function AffiliatesDeskView() {
                 </table>
               </div>
             )}
+            {filteredAffiliates.length > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                setCurrentPage={setCurrentPage}
+                totalPages={totalPages}
+                itemsPerPage={itemsPerPage}
+                setItemsPerPage={setItemsPerPage}
+                totalCount={filteredAffiliates.length}
+                itemLabel="partners"
+              />
+            )}
           </div>
         </>
       ) : (
@@ -499,18 +527,18 @@ export default function AffiliatesDeskView() {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
                   <tr>
-                    <th className="px-6 py-3.5">Date &amp; Time (UTC)</th>
-                    <th className="px-6 py-3.5">Payment ID</th>
-                    <th className="px-6 py-3.5">Partner Name</th>
-                    <th className="px-6 py-3.5">Type</th>
-                    <th className="px-6 py-3.5">Amount Paid</th>
-                    <th className="px-6 py-3.5">Currency</th>
-                    <th className="px-6 py-3.5">Blockchain TxHash</th>
-                    <th className="px-6 py-3.5">Notes</th>
+                    <th scope="col" className="px-6 py-3.5">Date &amp; Time (UTC)</th>
+                    <th scope="col" className="px-6 py-3.5">Payment ID</th>
+                    <th scope="col" className="px-6 py-3.5">Partner Name</th>
+                    <th scope="col" className="px-6 py-3.5">Type</th>
+                    <th scope="col" className="px-6 py-3.5">Amount Paid</th>
+                    <th scope="col" className="px-6 py-3.5">Currency</th>
+                    <th scope="col" className="px-6 py-3.5">Blockchain TxHash</th>
+                    <th scope="col" className="px-6 py-3.5">Notes</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
-                  {payoutLogs.map(log => {
+                  {paginatedPayoutLogs.map(log => {
                     const dateStr = new Date(log.created_at).toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
                     return (
                       <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
@@ -534,6 +562,17 @@ export default function AffiliatesDeskView() {
                 </tbody>
               </table>
             </div>
+          )}
+          {payoutLogs.length > 0 && (
+            <Pagination
+              currentPage={logsPage}
+              setCurrentPage={setLogsPage}
+              totalPages={logsTotalPages}
+              itemsPerPage={logsPerPage}
+              setItemsPerPage={setLogsPerPage}
+              totalCount={payoutLogs.length}
+              itemLabel="transactions"
+            />
           )}
         </div>
       )}
@@ -559,8 +598,8 @@ export default function AffiliatesDeskView() {
 
             <form onSubmit={handleProcessPayout} className="space-y-4">
               <div>
-                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Payout Amount ($)</label>
-                <input
+                <label htmlFor="affiliatesdeskview-field-1" className="block text-xs font-mono text-slate-400 uppercase mb-1">Payout Amount ($)</label>
+                <input id="affiliatesdeskview-field-1"
                   type="number"
                   step="0.01"
                   required
@@ -572,8 +611,8 @@ export default function AffiliatesDeskView() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Settlement Currency</label>
-                <select
+                <label htmlFor="affiliatesdeskview-field-2" className="block text-xs font-mono text-slate-400 uppercase mb-1">Settlement Currency</label>
+                <select id="affiliatesdeskview-field-2"
                   value={payoutForm.currency}
                   onChange={e => setPayoutForm({ ...payoutForm, currency: e.target.value })}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#e39e2e]"
@@ -586,8 +625,8 @@ export default function AffiliatesDeskView() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Blockchain TxHash / Ref</label>
-                <input
+                <label htmlFor="affiliatesdeskview-field-3" className="block text-xs font-mono text-slate-400 uppercase mb-1">Blockchain TxHash / Ref</label>
+                <input id="affiliatesdeskview-field-3"
                   type="text"
                   required
                   placeholder="Enter transaction hash or reference..."
@@ -598,8 +637,8 @@ export default function AffiliatesDeskView() {
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Admin Notes (Optional)</label>
-                <input
+                <label htmlFor="affiliatesdeskview-field-4" className="block text-xs font-mono text-slate-400 uppercase mb-1">Admin Notes (Optional)</label>
+                <input id="affiliatesdeskview-field-4"
                   type="text"
                   placeholder="Weekly settlement payment..."
                   value={payoutForm.notes}

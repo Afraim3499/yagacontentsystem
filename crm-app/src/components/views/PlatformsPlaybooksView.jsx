@@ -9,6 +9,12 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState({ show: false, message: '', isError: false });
+
+  const showToast = (message, isError = false) => {
+    setToast({ show: true, message, isError });
+    setTimeout(() => setToast({ show: false, message: '', isError: false }), 4000);
+  };
 
   // Form State for Add / Edit
   const [formState, setFormState] = useState({
@@ -65,7 +71,7 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
 
     try {
       // Upsert to Supabase platforms table
-      await supabase.from('platforms').upsert({
+      const { error } = await supabase.from('platforms').upsert({
         id: formState.id,
         name: formState.name,
         category: formState.category,
@@ -74,6 +80,7 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
         engagement_req: formState.engagementReq,
         status: formState.status
       }, { onConflict: 'id' });
+      if (error) throw error;
 
       // Update local state
       if (editingId) {
@@ -85,13 +92,19 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
       }
     } catch (err) {
       console.error('Save platform error:', err);
+      showToast(`❌ Failed to save platform: ${err.message || err}`, true);
     }
     setSaving(false);
   };
 
   const handleDeletePlatform = async (platformId) => {
     if (!confirm(`Delete platform ${platformId}? This will remove it from CRM dispatch.`)) return;
-    await supabase.from('platforms').delete().eq('id', platformId);
+    const { error } = await supabase.from('platforms').delete().eq('id', platformId);
+    if (error) {
+      console.error('Delete platform error:', error);
+      showToast(`❌ Failed to delete platform: ${error.message}`, true);
+      return;
+    }
     setPlatforms(prev => prev.filter(p => p.id !== platformId));
   };
 
@@ -197,8 +210,8 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
             <form onSubmit={handleSavePlatform} className="space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider">Platform Name *</label>
-                  <input
+                  <label htmlFor="platformsplaybooksview-field-1" className="text-slate-300 font-bold uppercase tracking-wider">Platform Name *</label>
+                  <input id="platformsplaybooksview-field-1"
                     type="text"
                     required
                     value={formState.name}
@@ -209,8 +222,8 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider">Category</label>
-                  <select
+                  <label htmlFor="platformsplaybooksview-field-2" className="text-slate-300 font-bold uppercase tracking-wider">Category</label>
+                  <select id="platformsplaybooksview-field-2"
                     value={formState.category}
                     onChange={(e) => setFormState({ ...formState, category: e.target.value })}
                     className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none font-sans"
@@ -225,8 +238,8 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider">Daily Posts Required</label>
-                  <input
+                  <label htmlFor="platformsplaybooksview-field-3" className="text-slate-300 font-bold uppercase tracking-wider">Daily Posts Required</label>
+                  <input id="platformsplaybooksview-field-3"
                     type="number"
                     min="1"
                     value={formState.dailyPostsReq}
@@ -236,8 +249,8 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider">Status</label>
-                  <select
+                  <label htmlFor="platformsplaybooksview-field-4" className="text-slate-300 font-bold uppercase tracking-wider">Status</label>
+                  <select id="platformsplaybooksview-field-4"
                     value={formState.status}
                     onChange={(e) => setFormState({ ...formState, status: e.target.value })}
                     className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#38bdf8] focus:outline-none font-sans"
@@ -249,8 +262,8 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider">Telegram Setup Instruction Guidelines</label>
-                <textarea
+                <label htmlFor="platformsplaybooksview-field-5" className="text-slate-300 font-bold uppercase tracking-wider">Telegram Setup Instruction Guidelines</label>
+                <textarea id="platformsplaybooksview-field-5"
                   rows={4}
                   value={formState.setupInstruction}
                   onChange={(e) => setFormState({ ...formState, setupInstruction: e.target.value })}
@@ -278,6 +291,15 @@ export default function PlatformsPlaybooksView({ platforms: initialPlatforms }) 
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed bottom-6 right-6 z-50 border text-white px-5 py-3 rounded-xl shadow-2xl text-xs font-mono flex items-center gap-3 animate-bounce ${
+          toast.isError ? 'bg-rose-950 border-rose-500' : 'bg-slate-900 border-[#e39e2e]'
+        }`}>
+          <span>{toast.message}</span>
         </div>
       )}
     </div>

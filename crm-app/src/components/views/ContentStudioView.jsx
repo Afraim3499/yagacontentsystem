@@ -89,6 +89,12 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
   // Content Rows from Supabase
   const [contentRows, setContentRows] = useState([]);
 
+  const [toast, setToast] = useState({ show: false, message: '', isError: false });
+  const showToast = (message, isError = false) => {
+    setToast({ show: true, message, isError });
+    setTimeout(() => setToast({ show: false, message: '', isError: false }), 4000);
+  };
+
   useEffect(() => {
     if (creators && creators.length > 0) {
       const activeIds = creators.filter(c => c.active).map(c => c.id);
@@ -190,12 +196,13 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
     const newId = `CNT-${selectedDate.replace(/-/g, '')}-${String(existingCount + 1).padStart(3, '0')}`;
 
     try {
-      await supabase.from('content_days').upsert({
+      const { error: dayError } = await supabase.from('content_days').upsert({
         id: dayId,
         date: selectedDate,
         status: 'Draft',
         total_assignments: existingCount + 1
       }, { onConflict: 'id' });
+      if (dayError) throw dayError;
 
       // Build initial caption from Headline + Subheadline + Body Content or Topic
       let defaultCaptionText = '';
@@ -204,7 +211,7 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
       if (newBodyContent) defaultCaptionText += `${newBodyContent}`;
       else defaultCaptionText += `**${platformObj.name}:** ${newTopic}`;
 
-      await supabase.from('base_content').insert({
+      const { error: contentError } = await supabase.from('base_content').insert({
         id: newId,
         day_id: dayId,
         platform_id: newPlatformId,
@@ -217,6 +224,7 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
         body_content: newBodyContent || null,
         drive_link: newDriveLink || null
       });
+      if (contentError) throw contentError;
 
       const targetCreatorIds = newSelectedCreators.length > 0 ? newSelectedCreators : creators.map(c => c.id);
       const captionInserts = targetCreatorIds.map(cId => ({
@@ -228,7 +236,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
       }));
 
       if (captionInserts.length > 0) {
-        await supabase.from('creator_captions').insert(captionInserts);
+        const { error: captionError } = await supabase.from('creator_captions').insert(captionInserts);
+        if (captionError) throw captionError;
       }
 
       // Reset form
@@ -245,6 +254,7 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
       }
     } catch (err) {
       console.error('Error saving topic:', err);
+      showToast(`❌ Failed to save topic: ${err.message || err}`, true);
     }
     setSaving(false);
   };
@@ -263,12 +273,15 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
       let startIdx = contentRows.length;
       const newRows = [];
 
-      await supabase.from('content_days').upsert({
+      const { error: dayError } = await supabase.from('content_days').upsert({
         id: dayId,
         date: selectedDate,
         status: 'Draft',
         total_assignments: 0
       }, { onConflict: 'id' });
+      if (dayError) throw dayError;
+
+      let rowFailures = 0;
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -304,6 +317,7 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
         if (bcErr) {
           console.error('Insert base_content error:', bcErr);
+          rowFailures++;
           continue;
         }
 
@@ -314,14 +328,19 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
         }));
 
         if (captionInserts.length > 0) {
-          await supabase.from('creator_captions').insert(captionInserts);
+          const { error: captionErr } = await supabase.from('creator_captions').insert(captionInserts);
+          if (captionErr) {
+            console.error('Insert creator_captions error:', captionErr);
+            rowFailures++;
+          }
         }
         newRows.push(newId);
       }
 
-      await supabase.from('content_days').update({
+      const { error: updateError } = await supabase.from('content_days').update({
         total_assignments: contentRows.length + newRows.length
       }).eq('id', dayId);
+      if (updateError) throw updateError;
 
       setBulkCsvText("");
       setIsBulkImportModalOpen(false);
@@ -330,15 +349,27 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
       if (!availableDates.includes(selectedDate)) {
         setAvailableDates(prev => [...new Set([...prev, selectedDate])].sort().reverse());
       }
+
+      if (rowFailures > 0) {
+        showToast(`⚠️ Imported with ${rowFailures} row(s) failed — check console for details.`, true);
+      } else {
+        showToast(`✅ Imported ${newRows.length} content row(s).`);
+      }
     } catch (err) {
       console.error('Bulk import error:', err);
+      showToast(`❌ Bulk import failed: ${err.message || err}`, true);
     }
     setSaving(false);
   };
 
   // ── DELETE TOPIC ROW ──
   const handleDeleteRow = async (contentId) => {
-    await supabase.from('base_content').delete().eq('id', contentId);
+    const { error } = await supabase.from('base_content').delete().eq('id', contentId);
+    if (error) {
+      console.error('Delete content row error:', error);
+      showToast(`❌ Failed to delete row: ${error.message}`, true);
+      return;
+    }
     setContentRows(prev => prev.filter(r => r.id !== contentId));
   };
 
@@ -348,10 +379,15 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
     const isAssigned = row.creatorCaptions && row.creatorCaptions[creatorId] !== undefined;
 
     if (isAssigned) {
-      await supabase.from('creator_captions')
+      const { error } = await supabase.from('creator_captions')
         .delete()
         .eq('content_id', row.id)
         .eq('creator_id', creatorId);
+      if (error) {
+        console.error('Unassign creator error:', error);
+        showToast(`❌ Failed to unassign creator: ${error.message}`, true);
+        return;
+      }
 
       const updated = [...contentRows];
       const newCaptions = { ...updated[rowIndex].creatorCaptions };
@@ -366,13 +402,18 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
       if (row.bodyContent) defaultCaption += `${row.bodyContent}`;
       else defaultCaption += `**${platformName}:** ${row.sharedTopic}`;
 
-      await supabase.from('creator_captions').insert({
+      const { error } = await supabase.from('creator_captions').insert({
         content_id: row.id,
         creator_id: creatorId,
         caption: defaultCaption,
         headline: row.headline || null,
         subheadline: row.subheadline || null
       });
+      if (error) {
+        console.error('Assign creator error:', error);
+        showToast(`❌ Failed to assign creator: ${error.message}`, true);
+        return;
+      }
 
       const updated = [...contentRows];
       updated[rowIndex] = {
@@ -394,10 +435,14 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
         const key = `${contentId}-${creatorId}`;
         clearTimeout(timers[key]);
         timers[key] = setTimeout(async () => {
-          await supabase
+          const { error } = await supabase
             .from('creator_captions')
-            .upsert({ content_id: contentId, creator_id: creatorId, caption: newCaption }, 
+            .upsert({ content_id: contentId, creator_id: creatorId, caption: newCaption },
               { onConflict: 'content_id,creator_id' });
+          if (error) {
+            console.error('Autosave caption error:', error);
+            showToast(`❌ Autosave failed for this caption: ${error.message}`, true);
+          }
         }, 800);
       };
     })(),
@@ -420,12 +465,18 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
     if (!newDate || !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return;
     
     const dayId = `DAY-${newDate.replace(/-/g, '')}`;
-    await supabase.from('content_days').upsert({
+    const { error } = await supabase.from('content_days').upsert({
       id: dayId,
       date: newDate,
       status: 'Draft',
       total_assignments: 0
     }, { onConflict: 'id' });
+
+    if (error) {
+      console.error('Add date error:', error);
+      showToast(`❌ Failed to add date: ${error.message}`, true);
+      return;
+    }
 
     setAvailableDates(prev => [...new Set([...prev, newDate])].sort().reverse());
     setSelectedDate(newDate);
@@ -804,8 +855,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Paste Table Data / CSV Text Here *</label>
-                <textarea
+                <label htmlFor="contentstudioview-field-1" className="text-slate-300 font-bold uppercase tracking-wider block">Paste Table Data / CSV Text Here *</label>
+                <textarea id="contentstudioview-field-1"
                   rows={8}
                   required
                   value={bulkCsvText}
@@ -841,8 +892,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
             <form onSubmit={handleAddTopic} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider">Base Topic / Objective *</label>
-                <input
+                <label htmlFor="contentstudioview-field-2" className="text-slate-300 font-bold uppercase tracking-wider">Base Topic / Objective *</label>
+                <input id="contentstudioview-field-2"
                   type="text"
                   required
                   value={newTopic}
@@ -858,10 +909,11 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <label className="text-slate-400 font-semibold text-[11px]">Headline / Title</label>
+                    <label htmlFor="contentstudioview-field-headline" className="text-slate-400 font-semibold text-[11px]">Headline / Title</label>
                     {getCharCountBadge(newHeadline.length, getPlatformLimit(newPlatformId).maxHeadline)}
                   </div>
                   <input
+                    id="contentstudioview-field-headline"
                     type="text"
                     value={newHeadline}
                     onChange={(e) => setNewHeadline(e.target.value)}
@@ -872,10 +924,11 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <label className="text-slate-400 font-semibold text-[11px]">Subheadline / Tagline</label>
+                    <label htmlFor="contentstudioview-field-subheadline" className="text-slate-400 font-semibold text-[11px]">Subheadline / Tagline</label>
                     {getCharCountBadge(newSubheadline.length, getPlatformLimit(newPlatformId).maxSubheadline)}
                   </div>
                   <input
+                    id="contentstudioview-field-subheadline"
                     type="text"
                     value={newSubheadline}
                     onChange={(e) => setNewSubheadline(e.target.value)}
@@ -886,10 +939,11 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <label className="text-slate-400 font-semibold text-[11px]">Body Content / Outline</label>
+                    <label htmlFor="contentstudioview-field-bodycontent" className="text-slate-400 font-semibold text-[11px]">Body Content / Outline</label>
                     {getCharCountBadge(newBodyContent.length, getPlatformLimit(newPlatformId).maxBody)}
                   </div>
                   <textarea
+                    id="contentstudioview-field-bodycontent"
                     rows={4}
                     value={newBodyContent}
                     onChange={(e) => setNewBodyContent(e.target.value)}
@@ -927,8 +981,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider">Target Platform</label>
-                  <select
+                  <label htmlFor="contentstudioview-field-3" className="text-slate-300 font-bold uppercase tracking-wider">Target Platform</label>
+                  <select id="contentstudioview-field-3"
                     value={newPlatformId}
                     onChange={(e) => setNewPlatformId(e.target.value)}
                     className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-sans"
@@ -940,8 +994,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider">Target EST Publish Time</label>
-                  <input
+                  <label htmlFor="contentstudioview-field-4" className="text-slate-300 font-bold uppercase tracking-wider">Target EST Publish Time</label>
+                  <input id="contentstudioview-field-4"
                     type="text"
                     value={newSlot}
                     onChange={(e) => setNewSlot(e.target.value)}
@@ -952,8 +1006,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider">Google Drive Asset Link (Optional)</label>
-                <input
+                <label htmlFor="contentstudioview-field-5" className="text-slate-300 font-bold uppercase tracking-wider">Google Drive Asset Link (Optional)</label>
+                <input id="contentstudioview-field-5"
                   type="url"
                   value={newDriveLink}
                   onChange={(e) => setNewDriveLink(e.target.value)}
@@ -1019,6 +1073,15 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed bottom-6 right-6 z-50 border text-white px-5 py-3 rounded-xl shadow-2xl text-xs font-mono flex items-center gap-3 animate-bounce ${
+          toast.isError ? 'bg-rose-950 border-rose-500' : 'bg-slate-900 border-[#e39e2e]'
+        }`}>
+          <span>{toast.message}</span>
         </div>
       )}
     </div>

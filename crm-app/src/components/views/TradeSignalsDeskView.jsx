@@ -25,6 +25,7 @@ import {
   Layers,
   Calendar
 } from 'lucide-react';
+import Pagination, { usePagination } from '../Pagination';
 
 export default function TradeSignalsDeskView() {
   const [signals, setSignals] = useState([]);
@@ -78,13 +79,30 @@ export default function TradeSignalsDeskView() {
   async function fetchSignals() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('trade_signals_log')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) console.error('Error fetching trade signals:', error);
-      else setSignals(data || []);
+      // Page through results instead of a single unbounded .select('*') —
+      // Supabase/PostgREST silently caps unranged queries at 1000 rows, so
+      // as the signal log grows past that, older signals would silently
+      // disappear from this desk with no error shown.
+      const PAGE_SIZE = 1000;
+      let allSignals = [];
+      let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data: page, error } = await supabase
+          .from('trade_signals_log')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error('Error fetching trade signals:', error);
+          break;
+        }
+        if (!page || page.length === 0) break;
+        allSignals = allSignals.concat(page);
+        if (page.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+      setSignals(allSignals);
     } catch (err) {
       console.error('fetchSignals exception:', err);
     } finally {
@@ -187,6 +205,10 @@ export default function TradeSignalsDeskView() {
       maxLoss
     };
   }, [filteredSignals]);
+
+  // Bound the DOM to one page of rows at a time instead of rendering every
+  // filtered signal at once.
+  const { currentPage, setCurrentPage, itemsPerPage, setItemsPerPage, totalPages, pageItems: paginatedSignals } = usePagination(filteredSignals);
 
   // Image Upload to Supabase Storage
   async function handleFileUpload(e, setUrlState) {
@@ -648,17 +670,17 @@ export default function TradeSignalsDeskView() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  <th className="py-3.5 px-4">Symbol & Setup Chart</th>
-                  <th className="py-3.5 px-4">Target Group</th>
-                  <th className="py-3.5 px-4">Entry / TP / SL / Lev</th>
-                  <th className="py-3.5 px-4">Custom Notes</th>
-                  <th className="py-3.5 px-4">Status & PnL %</th>
-                  <th className="py-3.5 px-4">Date Posted</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
+                  <th scope="col" className="py-3.5 px-4">Symbol & Setup Chart</th>
+                  <th scope="col" className="py-3.5 px-4">Target Group</th>
+                  <th scope="col" className="py-3.5 px-4">Entry / TP / SL / Lev</th>
+                  <th scope="col" className="py-3.5 px-4">Custom Notes</th>
+                  <th scope="col" className="py-3.5 px-4">Status & PnL %</th>
+                  <th scope="col" className="py-3.5 px-4">Date Posted</th>
+                  <th scope="col" className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-sm">
-                {filteredSignals.map((s) => {
+                {paginatedSignals.map((s) => {
                   const pnl = Number(s.pnl_percentage || 0);
                   const isWin = pnl > 0;
                   const isActive = s.status === 'ACTIVE';
@@ -795,6 +817,18 @@ export default function TradeSignalsDeskView() {
           </div>
         )}
       </div>
+
+      {!loading && filteredSignals.length > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          setCurrentPage={setCurrentPage}
+          totalPages={totalPages}
+          itemsPerPage={itemsPerPage}
+          setItemsPerPage={setItemsPerPage}
+          totalCount={filteredSignals.length}
+          itemLabel="signals"
+        />
+      )}
 
       {/* --- CREATE NEW TRADE SIGNAL MODAL --- */}
       {isCreateModalOpen && (

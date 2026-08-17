@@ -1,0 +1,4 @@
+# crm.yagacalls.com is an internal operations tool, not public content.
+# It must never be crawled or indexed.
+User-agent: *
+Disallow: /

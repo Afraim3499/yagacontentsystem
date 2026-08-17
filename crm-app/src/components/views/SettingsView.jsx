@@ -13,6 +13,12 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
   const [newOwnerName, setNewOwnerName] = useState("");
   const [newOwnerChatId, setNewOwnerChatId] = useState("");
   const [ownerList, setOwnerList] = useState(owners);
+  const [toast, setToast] = useState({ show: false, message: '', isError: false });
+
+  const showToast = (message, isError = false) => {
+    setToast({ show: true, message, isError });
+    setTimeout(() => setToast({ show: false, message: '', isError: false }), 4000);
+  };
 
   const handleSave = (e) => {
     e.preventDefault();
@@ -28,12 +34,18 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
     if (!newOwnerName.trim() || !newOwnerChatId.trim()) return;
 
     const ownerId = `OWN-${Date.now().toString().substring(7)}`;
-    await supabase.from('owners').upsert({
+    const { error } = await supabase.from('owners').upsert({
       id: ownerId,
       name: newOwnerName.trim(),
       telegram_chat_id: newOwnerChatId.trim(),
       active: true
     }, { onConflict: 'telegram_chat_id' });
+
+    if (error) {
+      console.error('Add owner error:', error);
+      showToast(`❌ Failed to add owner: ${error.message}`, true);
+      return;
+    }
 
     setOwnerList(prev => [...prev.filter(o => o.telegram_chat_id !== newOwnerChatId), {
       id: ownerId,
@@ -48,7 +60,12 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
 
   const handleDeleteOwner = async (ownerId) => {
     if (!confirm(`Remove owner ${ownerId}?`)) return;
-    await supabase.from('owners').delete().eq('id', ownerId);
+    const { error } = await supabase.from('owners').delete().eq('id', ownerId);
+    if (error) {
+      console.error('Delete owner error:', error);
+      showToast(`❌ Failed to remove owner: ${error.message}`, true);
+      return;
+    }
     setOwnerList(prev => prev.filter(o => o.id !== ownerId));
   };
 
@@ -81,8 +98,8 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Company / Operation Name</label>
-                <input
+                <label htmlFor="settingsview-field-1" className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Company / Operation Name</label>
+                <input id="settingsview-field-1"
                   type="text"
                   value={formState.companyName}
                   onChange={(e) => setFormState({ ...formState, companyName: e.target.value })}
@@ -91,8 +108,8 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Default Operational Timezone</label>
-                <input
+                <label htmlFor="settingsview-field-2" className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Default Operational Timezone</label>
+                <input id="settingsview-field-2"
                   type="text"
                   value={formState.timezone}
                   onChange={(e) => setFormState({ ...formState, timezone: e.target.value })}
@@ -101,8 +118,8 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Telegram Bot Username</label>
-                <input
+                <label htmlFor="settingsview-field-3" className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Telegram Bot Username</label>
+                <input id="settingsview-field-3"
                   type="text"
                   value={formState.botUsername}
                   onChange={(e) => setFormState({ ...formState, botUsername: e.target.value })}
@@ -111,8 +128,8 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Staggered Batch Interval (Mins)</label>
-                <input
+                <label htmlFor="settingsview-field-4" className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Staggered Batch Interval (Mins)</label>
+                <input id="settingsview-field-4"
                   type="number"
                   value={formState.staggeredBatchIntervalMinutes}
                   onChange={(e) => setFormState({ ...formState, staggeredBatchIntervalMinutes: parseInt(e.target.value, 10) || 30 })}
@@ -223,6 +240,15 @@ export default function SettingsView({ systemSettings, owners = [], onSaveSettin
           </div>
         </div>
       </div>
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed bottom-6 right-6 z-50 border text-white px-5 py-3 rounded-xl shadow-2xl text-xs font-mono flex items-center gap-3 animate-bounce ${
+          toast.isError ? 'bg-rose-950 border-rose-500' : 'bg-slate-900 border-[#e39e2e]'
+        }`}>
+          <span>{toast.message}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -73,6 +73,11 @@ export default function MemberTrackingDeskView() {
   const [newPkgPrice, setNewPkgPrice] = useState("200.00");
 
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState({ show: false, message: '', isError: false });
+  const showToast = (message, isError = false) => {
+    setToast({ show: true, message, isError });
+    setTimeout(() => setToast({ show: false, message: '', isError: false }), 4000);
+  };
 
   // Pagination State (100 members per page)
   const [currentPage, setCurrentPage] = useState(1);
@@ -87,33 +92,43 @@ export default function MemberTrackingDeskView() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { data: ascData } = await supabase.from('associates').select('*').order('created_at', { ascending: false });
+      const { data: ascData, error: ascError } = await supabase.from('associates').select('*').order('created_at', { ascending: false });
+      if (ascError) throw ascError;
       setAssociates(ascData || []);
 
-      // Concurrently fetch all ranges in parallel to load 3,299+ members in <1 sec
-      const pagePromises = [
-        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(0, 999),
-        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(1000, 1999),
-        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(2000, 2999),
-        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(3000, 3999),
-        supabase.from('community_members_log').select('*').order('created_at', { ascending: false }).range(4000, 4999)
-      ];
-      const pageResults = await Promise.all(pagePromises);
+      // Page through community_members_log sequentially instead of a fixed
+      // set of parallel .range() calls — the old approach silently dropped
+      // every row past 5,000 with no error surfaced. This keeps fetching
+      // until a page comes back short (or empty), so it's correct at any
+      // table size, and stops as soon as there's nothing left to load.
+      const PAGE_SIZE = 1000;
       let allMembers = [];
-      pageResults.forEach(res => {
-        if (res.data && res.data.length > 0) {
-          allMembers = allMembers.concat(res.data);
-        }
-      });
+      let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data: page, error: pageError } = await supabase
+          .from('community_members_log')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (pageError) throw pageError;
+        if (!page || page.length === 0) break;
+        allMembers = allMembers.concat(page);
+        if (page.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
       setMembersLog(allMembers);
 
-      const { data: pkgData } = await supabase.from('vip_packages').select('*').order('price', { ascending: true });
+      const { data: pkgData, error: pkgError } = await supabase.from('vip_packages').select('*').order('price', { ascending: true });
+      if (pkgError) throw pkgError;
       setPackages(pkgData || []);
 
-      const { data: ruleData } = await supabase.from('commission_rules').select('*').eq('id', 'RULE-DEFAULT').single();
+      const { data: ruleData, error: ruleError } = await supabase.from('commission_rules').select('*').eq('id', 'RULE-DEFAULT').single();
+      if (ruleError && ruleError.code !== 'PGRST116') throw ruleError; // PGRST116 = no row found, fall back to defaults
       if (ruleData) setCommissionRules(ruleData);
     } catch (err) {
       console.error('Error fetching member tracking data:', err);
+      showToast(`❌ Failed to load member data: ${err.message || err}`, true);
     }
     setLoading(false);
     setRefreshing(false);
@@ -145,7 +160,7 @@ export default function MemberTrackingDeskView() {
 
     const ascId = `ASC-${Date.now().toString().substring(7)}`;
     try {
-      await supabase.from('associates').insert({
+      const { error } = await supabase.from('associates').insert({
         id: ascId,
         name: newAscName.trim(),
         telegram_chat_id: newAscChatId.trim() || null,
@@ -154,14 +169,17 @@ export default function MemberTrackingDeskView() {
         paid_commission_pct: Number(commissionRules.paid_commission_pct) || 5.00,
         status: 'ACTIVE'
       });
+      if (error) throw error;
 
       await fetchData();
       setNewAscName("");
       setNewAscChatId("");
       setNewAscInviteLink("");
       setIsAddAssociateModalOpen(false);
+      showToast('✅ Associate added.');
     } catch (err) {
       console.error('Add associate error:', err);
+      showToast(`❌ Failed to add associate: ${err.message || err}`, true);
     }
     setSaving(false);
   };
@@ -184,7 +202,7 @@ export default function MemberTrackingDeskView() {
     if (!editingAsc || !editAscName.trim() || !editAscInviteLink.trim()) return;
     setSaving(true);
     try {
-      await supabase.from('associates').update({
+      const { error } = await supabase.from('associates').update({
         name: editAscName.trim(),
         telegram_chat_id: editAscChatId.trim() || null,
         unique_invite_link: editAscInviteLink.trim(),
@@ -192,12 +210,15 @@ export default function MemberTrackingDeskView() {
         paid_commission_pct: parseFloat(editAscPaidPct) || 5.00,
         status: editAscStatus
       }).eq('id', editingAsc.id);
+      if (error) throw error;
 
       await fetchData();
       setIsEditAssociateModalOpen(false);
       setEditingAsc(null);
+      showToast('✅ Associate updated.');
     } catch (err) {
       console.error('Error updating associate:', err);
+      showToast(`❌ Failed to update associate: ${err.message || err}`, true);
     }
     setSaving(false);
   };
@@ -210,21 +231,24 @@ export default function MemberTrackingDeskView() {
 
     const pkgId = `PKG-${newPkgName.trim().toUpperCase().replace(/\s+/g, '-')}`;
     try {
-      await supabase.from('vip_packages').insert({
+      const { error } = await supabase.from('vip_packages').insert({
         id: pkgId,
         name: newPkgName.trim(),
         duration_months: parseInt(newPkgDuration) || 3,
         price: parseFloat(newPkgPrice) || 200.00,
         is_active: true
       });
+      if (error) throw error;
 
       await fetchData();
       setNewPkgName("");
       setNewPkgDuration("3");
       setNewPkgPrice("200.00");
       setIsAddPkgModalOpen(false);
+      showToast('✅ Package added.');
     } catch (err) {
       console.error('Add package error:', err);
+      showToast(`❌ Failed to add package: ${err.message || err}`, true);
     }
     setSaving(false);
   };
@@ -232,20 +256,27 @@ export default function MemberTrackingDeskView() {
   // Update Package Price / Name
   const handleUpdatePackage = async (pkgId, updatedPrice, updatedName) => {
     try {
-      await supabase.from('vip_packages').update({
+      const { error } = await supabase.from('vip_packages').update({
         price: parseFloat(updatedPrice),
         name: updatedName
       }).eq('id', pkgId);
+      if (error) throw error;
       await fetchData();
     } catch (err) {
       console.error('Update package error:', err);
+      showToast(`❌ Failed to update package: ${err.message || err}`, true);
     }
   };
 
   // Delete Package
   const handleDeletePackage = async (pkgId) => {
     if (!confirm('Delete this VIP package tier?')) return;
-    await supabase.from('vip_packages').delete().eq('id', pkgId);
+    const { error } = await supabase.from('vip_packages').delete().eq('id', pkgId);
+    if (error) {
+      console.error('Delete package error:', error);
+      showToast(`❌ Failed to delete package: ${error.message}`, true);
+      return;
+    }
     setPackages(prev => prev.filter(p => p.id !== pkgId));
   };
 
@@ -253,10 +284,12 @@ export default function MemberTrackingDeskView() {
   const handleDeleteMember = async (memberLogId, memberName) => {
     if (!confirm(`Are you sure you want to delete member log entry for "${memberName}"?`)) return;
     try {
-      await supabase.from('community_members_log').delete().eq('id', memberLogId);
-      setMemberLog(prev => prev.filter(m => m.id !== memberLogId));
+      const { error } = await supabase.from('community_members_log').delete().eq('id', memberLogId);
+      if (error) throw error;
+      setMembersLog(prev => prev.filter(m => m.id !== memberLogId));
     } catch (err) {
       console.error('Delete member error:', err);
+      showToast(`❌ Failed to delete member: ${err.message || err}`, true);
     }
   };
 
@@ -264,15 +297,17 @@ export default function MemberTrackingDeskView() {
   const handleSaveCommissionRules = async () => {
     setSaving(true);
     try {
-      await supabase.from('commission_rules').upsert({
+      const { error } = await supabase.from('commission_rules').upsert({
         id: 'RULE-DEFAULT',
         free_rate_per_100: parseFloat(commissionRules.free_rate_per_100),
         paid_commission_pct: parseFloat(commissionRules.paid_commission_pct),
         updated_at: new Date().toISOString()
       });
-      alert('✅ Global Commission Rules Saved Successfully!');
+      if (error) throw error;
+      showToast('✅ Global Commission Rules Saved Successfully!');
     } catch (err) {
       console.error('Error saving rules:', err);
+      showToast(`❌ Failed to save commission rules: ${err.message || err}`, true);
     }
     setSaving(false);
   };
@@ -299,7 +334,7 @@ export default function MemberTrackingDeskView() {
     const paidComm = priceVal * (Number(commissionRules.paid_commission_pct) / 100);
 
     try {
-      await supabase.from('community_members_log').update({
+      const { error } = await supabase.from('community_members_log').update({
         member_tier: 'PAID_VIP',
         package_id: selectedPkgId,
         package_name: pkgName,
@@ -307,12 +342,15 @@ export default function MemberTrackingDeskView() {
         paid_commission: paidComm,
         paid_group_joined_at: new Date().toISOString()
       }).eq('id', selectedMemberForVip.id);
+      if (error) throw error;
 
       await fetchData();
       setIsVipModalOpen(false);
       setSelectedMemberForVip(null);
+      showToast('✅ Member upgraded to VIP.');
     } catch (err) {
       console.error('VIP Upgrade error:', err);
+      showToast(`❌ Failed to process VIP upgrade: ${err.message || err}`, true);
     }
     setSaving(false);
   };
@@ -639,14 +677,14 @@ export default function MemberTrackingDeskView() {
                 <table className="w-full text-left text-xs text-slate-300">
                   <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
                     <tr>
-                      <th className="p-3.5">Member ID & Name</th>
-                      <th className="p-3.5">Associate Attribution</th>
-                      <th className="p-3.5">Member Tier</th>
-                      <th className="p-3.5">VIP Package & Revenue ($)</th>
-                      <th className="p-3.5">Free Comm ($30/100)</th>
-                      <th className="p-3.5">Paid 5% Comm ($)</th>
-                      <th className="p-3.5">Joined Timestamps</th>
-                      <th className="p-3.5">Action</th>
+                      <th scope="col" className="p-3.5">Member ID & Name</th>
+                      <th scope="col" className="p-3.5">Associate Attribution</th>
+                      <th scope="col" className="p-3.5">Member Tier</th>
+                      <th scope="col" className="p-3.5">VIP Package & Revenue ($)</th>
+                      <th scope="col" className="p-3.5">Free Comm ($30/100)</th>
+                      <th scope="col" className="p-3.5">Paid 5% Comm ($)</th>
+                      <th scope="col" className="p-3.5">Joined Timestamps</th>
+                      <th scope="col" className="p-3.5">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 font-mono">
@@ -897,10 +935,11 @@ export default function MemberTrackingDeskView() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-2">
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase text-xs block">Free Group Commission ($ per 100 members)</label>
+                  <label htmlFor="membertrackingdeskview-free-rate" className="text-slate-300 font-bold uppercase text-xs block">Free Group Commission ($ per 100 members)</label>
                   <div className="flex items-center gap-2">
                     <span className="text-slate-400 font-mono">$</span>
                     <input
+                      id="membertrackingdeskview-free-rate"
                       type="number"
                       step="1.00"
                       value={commissionRules.free_rate_per_100}
@@ -912,9 +951,10 @@ export default function MemberTrackingDeskView() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase text-xs block">Paid VIP Commission Percentage (%)</label>
+                  <label htmlFor="membertrackingdeskview-paid-pct" className="text-slate-300 font-bold uppercase text-xs block">Paid VIP Commission Percentage (%)</label>
                   <div className="flex items-center gap-2">
                     <input
+                      id="membertrackingdeskview-paid-pct"
                       type="number"
                       step="0.5"
                       value={commissionRules.paid_commission_pct}
@@ -1027,8 +1067,8 @@ export default function MemberTrackingDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Select VIP Package Tier *</label>
-                <select
+                <label htmlFor="membertrackingdeskview-field-1" className="text-slate-300 font-bold uppercase tracking-wider block">Select VIP Package Tier *</label>
+                <select id="membertrackingdeskview-field-1"
                   value={selectedPkgId}
                   onChange={(e) => setSelectedPkgId(e.target.value)}
                   className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-bold"
@@ -1042,8 +1082,8 @@ export default function MemberTrackingDeskView() {
 
               {selectedPkgId === "CUSTOM" && (
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Custom VIP Subscription Price ($) *</label>
-                  <input
+                  <label htmlFor="membertrackingdeskview-field-2" className="text-slate-300 font-bold uppercase tracking-wider block">Custom VIP Subscription Price ($) *</label>
+                  <input id="membertrackingdeskview-field-2"
                     type="number"
                     required
                     value={customVipValue}
@@ -1085,8 +1125,8 @@ export default function MemberTrackingDeskView() {
 
             <form onSubmit={handleAddPackage} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Package Name *</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-3" className="text-slate-300 font-bold uppercase tracking-wider block">Package Name *</label>
+                <input id="membertrackingdeskview-field-3"
                   type="text"
                   required
                   value={newPkgName}
@@ -1097,8 +1137,8 @@ export default function MemberTrackingDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Duration (Months) *</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-4" className="text-slate-300 font-bold uppercase tracking-wider block">Duration (Months) *</label>
+                <input id="membertrackingdeskview-field-4"
                   type="number"
                   required
                   value={newPkgDuration}
@@ -1109,8 +1149,8 @@ export default function MemberTrackingDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Package Price ($) *</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-5" className="text-slate-300 font-bold uppercase tracking-wider block">Package Price ($) *</label>
+                <input id="membertrackingdeskview-field-5"
                   type="number"
                   step="10.00"
                   required
@@ -1151,8 +1191,8 @@ export default function MemberTrackingDeskView() {
 
             <form onSubmit={handleAddAssociate} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Associate Full Name *</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-6" className="text-slate-300 font-bold uppercase tracking-wider block">Associate Full Name *</label>
+                <input id="membertrackingdeskview-field-6"
                   type="text"
                   required
                   value={newAscName}
@@ -1163,8 +1203,8 @@ export default function MemberTrackingDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Assigned Telegram Unique Invite URL *</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-7" className="text-slate-300 font-bold uppercase tracking-wider block">Assigned Telegram Unique Invite URL *</label>
+                <input id="membertrackingdeskview-field-7"
                   type="text"
                   required
                   value={newAscInviteLink}
@@ -1175,8 +1215,8 @@ export default function MemberTrackingDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Chat ID (Optional for Alerts)</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-8" className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Chat ID (Optional for Alerts)</label>
+                <input id="membertrackingdeskview-field-8"
                   type="text"
                   value={newAscChatId}
                   onChange={(e) => setNewAscChatId(e.target.value)}
@@ -1215,8 +1255,8 @@ export default function MemberTrackingDeskView() {
 
             <form onSubmit={handleSaveAssociateEdit} className="space-y-4 text-xs">
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Associate Full Name *</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-9" className="text-slate-300 font-bold uppercase tracking-wider block">Associate Full Name *</label>
+                <input id="membertrackingdeskview-field-9"
                   type="text"
                   required
                   value={editAscName}
@@ -1227,8 +1267,8 @@ export default function MemberTrackingDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Assigned Telegram Unique Invite URL *</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-10" className="text-slate-300 font-bold uppercase tracking-wider block">Assigned Telegram Unique Invite URL *</label>
+                <input id="membertrackingdeskview-field-10"
                   type="text"
                   required
                   value={editAscInviteLink}
@@ -1239,8 +1279,8 @@ export default function MemberTrackingDeskView() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Chat ID (For Direct Alerts)</label>
-                <input
+                <label htmlFor="membertrackingdeskview-field-11" className="text-slate-300 font-bold uppercase tracking-wider block">Telegram Chat ID (For Direct Alerts)</label>
+                <input id="membertrackingdeskview-field-11"
                   type="text"
                   value={editAscChatId}
                   onChange={(e) => setEditAscChatId(e.target.value)}
@@ -1251,8 +1291,8 @@ export default function MemberTrackingDeskView() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Free Comm ($ / member)</label>
-                  <input
+                  <label htmlFor="membertrackingdeskview-field-12" className="text-slate-300 font-bold uppercase tracking-wider block">Free Comm ($ / member)</label>
+                  <input id="membertrackingdeskview-field-12"
                     type="number"
                     step="0.05"
                     value={editAscFreeRate}
@@ -1263,8 +1303,8 @@ export default function MemberTrackingDeskView() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-slate-300 font-bold uppercase tracking-wider block">Paid Comm %</label>
-                  <input
+                  <label htmlFor="membertrackingdeskview-field-13" className="text-slate-300 font-bold uppercase tracking-wider block">Paid Comm %</label>
+                  <input id="membertrackingdeskview-field-13"
                     type="number"
                     step="0.5"
                     value={editAscPaidPct}
@@ -1284,6 +1324,15 @@ export default function MemberTrackingDeskView() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className={`fixed bottom-6 right-6 z-50 border text-white px-5 py-3 rounded-xl shadow-2xl text-xs font-mono flex items-center gap-3 animate-bounce ${
+          toast.isError ? 'bg-rose-950 border-rose-500' : 'bg-slate-900 border-[#e39e2e]'
+        }`}>
+          <span>{toast.message}</span>
         </div>
       )}
     </div>

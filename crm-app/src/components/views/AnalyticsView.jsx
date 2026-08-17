@@ -58,13 +58,13 @@ export default function AnalyticsView({ conversions }) {
           <table className="w-full text-left text-xs text-slate-300">
             <thead className="bg-slate-900/80 text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
               <tr>
-                <th className="p-3">Ref Code</th>
-                <th className="p-3">Creator</th>
-                <th className="p-3">Platform</th>
-                <th className="p-3">Total Clicks</th>
-                <th className="p-3">Free Group Joins</th>
-                <th className="p-3">VIP Conversions</th>
-                <th className="p-3">Est. Revenue</th>
+                <th scope="col" className="p-3">Ref Code</th>
+                <th scope="col" className="p-3">Creator</th>
+                <th scope="col" className="p-3">Platform</th>
+                <th scope="col" className="p-3">Total Clicks</th>
+                <th scope="col" className="p-3">Free Group Joins</th>
+                <th scope="col" className="p-3">VIP Conversions</th>
+                <th scope="col" className="p-3">Est. Revenue</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 font-mono">

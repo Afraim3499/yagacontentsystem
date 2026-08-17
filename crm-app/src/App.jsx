@@ -1,22 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { supabase } from './lib/supabase';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
-import DashboardView from './components/views/DashboardView';
-import ContentStudioView from './components/views/ContentStudioView';
-import CreatorsAccountsView from './components/views/CreatorsAccountsView';
-import PlatformsPlaybooksView from './components/views/PlatformsPlaybooksView';
-import ActivityLogsView from './components/views/ActivityLogsView';
-import EngagementDeskView from './components/views/EngagementDeskView';
-import IssueDeskView from './components/views/IssueDeskView';
-import AnalyticsView from './components/views/AnalyticsView';
-import SettingsView from './components/views/SettingsView';
-import MemberTrackingDeskView from './components/views/MemberTrackingDeskView';
-import ReviewModerationDeskView from './components/views/ReviewModerationDeskView';
-import VipMembersDeskView from './components/views/VipMembersDeskView';
-import TradeSignalsDeskView from './components/views/TradeSignalsDeskView';
-import AffiliatesDeskView from './components/views/AffiliatesDeskView';
 import CrmLockScreen from './components/CrmLockScreen';
+
+// Each desk view is only fetched when its tab is actually opened, instead
+// of all 16 views (plus their charting/table dependencies) being bundled
+// into a single ~1MB JS payload that loads in full before the login screen
+// even renders.
+const DashboardView = lazy(() => import('./components/views/DashboardView'));
+const ContentStudioView = lazy(() => import('./components/views/ContentStudioView'));
+const CreatorsAccountsView = lazy(() => import('./components/views/CreatorsAccountsView'));
+const PlatformsPlaybooksView = lazy(() => import('./components/views/PlatformsPlaybooksView'));
+const ActivityLogsView = lazy(() => import('./components/views/ActivityLogsView'));
+const EngagementDeskView = lazy(() => import('./components/views/EngagementDeskView'));
+const IssueDeskView = lazy(() => import('./components/views/IssueDeskView'));
+const AnalyticsView = lazy(() => import('./components/views/AnalyticsView'));
+const SettingsView = lazy(() => import('./components/views/SettingsView'));
+const MemberTrackingDeskView = lazy(() => import('./components/views/MemberTrackingDeskView'));
+const ReviewModerationDeskView = lazy(() => import('./components/views/ReviewModerationDeskView'));
+const VipMembersDeskView = lazy(() => import('./components/views/VipMembersDeskView'));
+const TradeSignalsDeskView = lazy(() => import('./components/views/TradeSignalsDeskView'));
+const AffiliatesDeskView = lazy(() => import('./components/views/AffiliatesDeskView'));
+
+function ViewLoadingFallback() {
+  return (
+    <div className="flex items-center justify-center py-24 text-slate-400 text-xs font-mono gap-3">
+      <div className="w-4 h-4 border-2 border-[#e39e2e] border-t-transparent rounded-full animate-spin" />
+      Loading desk...
+    </div>
+  );
+}
 
 function toCreator(row, voiceRow) {
   return {
@@ -358,6 +372,7 @@ export default function App() {
 
         {/* Right Content Area */}
         <main className="flex-1 min-w-0 overflow-y-auto">
+        <Suspense fallback={<ViewLoadingFallback />}>
           {activeTab === 'dashboard' && (
             <DashboardView 
               systemSettings={systemSettings}
@@ -453,6 +468,7 @@ export default function App() {
               }}
             />
           )}
+        </Suspense>
         </main>
       </div>
     </div>

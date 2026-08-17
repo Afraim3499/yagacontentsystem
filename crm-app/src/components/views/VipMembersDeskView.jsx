@@ -26,6 +26,7 @@ import {
   X,
   Edit
 } from 'lucide-react';
+import Pagination, { usePagination } from '../Pagination';
 
 export default function VipMembersDeskView() {
   const [vipMembers, setVipMembers] = useState([]);
@@ -77,14 +78,31 @@ export default function VipMembersDeskView() {
   async function fetchVipData() {
     setLoading(true);
     try {
-      const { data: memData, error: memErr } = await supabase
-        .from('community_members_log')
-        .select('*')
-        .or('member_tier.eq.PAID_VIP,member_tier.eq.PAID_VIP_PENDING')
-        .order('created_at', { ascending: false });
-
-      if (memErr) console.error('Error fetching VIP members:', memErr);
-      else setVipMembers(memData || []);
+      // Page through results instead of a single unbounded .select('*') —
+      // Supabase/PostgREST silently caps unranged queries at 1000 rows, so
+      // as the VIP roster grows past that, results (and totals computed
+      // from them) would be silently truncated with no error shown.
+      const PAGE_SIZE = 1000;
+      let allMembers = [];
+      let from = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data: page, error: memErr } = await supabase
+          .from('community_members_log')
+          .select('*')
+          .or('member_tier.eq.PAID_VIP,member_tier.eq.PAID_VIP_PENDING')
+          .order('created_at', { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (memErr) {
+          console.error('Error fetching VIP members:', memErr);
+          break;
+        }
+        if (!page || page.length === 0) break;
+        allMembers = allMembers.concat(page);
+        if (page.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+      setVipMembers(allMembers);
 
       const { data: ascData, error: ascErr } = await supabase
         .from('associates')
@@ -149,6 +167,11 @@ export default function VipMembersDeskView() {
       return 0;
     });
   }, [vipMembers, searchTerm, selectedAssociate, selectedPackage, selectedStatus, sortOrder]);
+
+  // Bound the DOM to one page of rows at a time — filteredVips can run into
+  // the thousands, and rendering all of them into <tr>s at once is a real
+  // scroll/perf problem.
+  const { currentPage, setCurrentPage, itemsPerPage, setItemsPerPage, totalPages, pageItems: paginatedVips } = usePagination(filteredVips);
 
   // Overall Stat Calculations
   const stats = useMemo(() => {
@@ -572,17 +595,17 @@ export default function VipMembersDeskView() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  <th className="py-3.5 px-4">Member Info</th>
-                  <th className="py-3.5 px-4">Referred Associate</th>
-                  <th className="py-3.5 px-4">Package & Duration</th>
-                  <th className="py-3.5 px-4">Joined & Expiration Date</th>
-                  <th className="py-3.5 px-4">Status</th>
-                  <th className="py-3.5 px-4">Commissions (5% / 25%)</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
+                  <th scope="col" className="py-3.5 px-4">Member Info</th>
+                  <th scope="col" className="py-3.5 px-4">Referred Associate</th>
+                  <th scope="col" className="py-3.5 px-4">Package & Duration</th>
+                  <th scope="col" className="py-3.5 px-4">Joined & Expiration Date</th>
+                  <th scope="col" className="py-3.5 px-4">Status</th>
+                  <th scope="col" className="py-3.5 px-4">Commissions (5% / 25%)</th>
+                  <th scope="col" className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-sm">
-                {filteredVips.map((m) => {
+                {paginatedVips.map((m) => {
                   const val = Number(m.paid_subscription_value || 0);
                   const comm = Number(m.paid_commission || (val * 0.05));
                   const kabComm = Number(m.kabidul_commission || (val * 0.25));
@@ -717,6 +740,18 @@ export default function VipMembersDeskView() {
           </div>
         )}
       </div>
+
+      {!loading && filteredVips.length > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          setCurrentPage={setCurrentPage}
+          totalPages={totalPages}
+          itemsPerPage={itemsPerPage}
+          setItemsPerPage={setItemsPerPage}
+          totalCount={filteredVips.length}
+          itemLabel="VIP members"
+        />
+      )}
 
       {/* --- LIVE EDIT VIP MEMBER MODAL --- */}
       {isEditModalOpen && editingMember && (
