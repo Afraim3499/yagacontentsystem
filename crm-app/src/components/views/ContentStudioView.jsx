@@ -828,8 +828,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
             <form onSubmit={handleBulkImport} className="space-y-4 text-xs">
               <div className="space-y-1.5 p-3 rounded-xl bg-[#080a0f] border border-white/10">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Target Creators for Bulk Import</label>
-                <div className="flex flex-wrap gap-2 pt-1">
+                <label id="contentstudioview-group-bulk-creators" className="text-slate-300 font-bold uppercase tracking-wider block">Target Creators for Bulk Import</label>
+                <div role="group" aria-labelledby="contentstudioview-group-bulk-creators" className="flex flex-wrap gap-2 pt-1">
                   {creators.map(c => {
                     const isSelected = bulkSelectedCreators.includes(c.id);
                     return (
@@ -953,8 +953,8 @@ export default function ContentStudioView({ creators, platforms, dailyBatch, onS
 
               {/* Creator Selection */}
               <div className="space-y-1.5 p-3 rounded-xl bg-[#080a0f] border border-white/10">
-                <label className="text-slate-300 font-bold uppercase tracking-wider block">Assign to Creators *</label>
-                <div className="flex flex-wrap gap-2 pt-1">
+                <label id="contentstudioview-group-assign-creators" className="text-slate-300 font-bold uppercase tracking-wider block">Assign to Creators *</label>
+                <div role="group" aria-labelledby="contentstudioview-group-assign-creators" className="flex flex-wrap gap-2 pt-1">
                   {creators.map(c => {
                     const isSelected = newSelectedCreators.includes(c.id);
                     return (

@@ -33,8 +33,7 @@ export default function IssueDeskView({ issues, onResolveIssue }) {
           replyText: replyText
         })
       });
-      const data = await res.json();
-      console.log('Reply API Response:', data);
+      await res.json();
 
       onResolveIssue(selectedIssue.id, replyText);
       setReplyText("");
