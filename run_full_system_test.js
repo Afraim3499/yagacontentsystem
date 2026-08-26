@@ -5,7 +5,7 @@
 
 const { Client } = require('pg');
 
-const DB_CONNECTION = 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
+const DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 
 async function runQuery(text, params = []) {
   const client = new Client({ connectionString: DB_CONNECTION, ssl: { rejectUnauthorized: false } });
