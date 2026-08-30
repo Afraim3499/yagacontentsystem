@@ -1,43 +1,52 @@
 import React from 'react';
-import { 
-  LayoutDashboard, 
-  CalendarDays, 
-  Users, 
+import {
+  LayoutDashboard,
+  CalendarDays,
+  Users,
   Crown,
   Star,
-  Layers, 
-  MessageSquareCode, 
-  AlertTriangle, 
-  BarChart3, 
+  Layers,
+  MessageSquareCode,
+  AlertTriangle,
+  BarChart3,
   Settings,
   Activity,
+  Wallet,
   X
 } from 'lucide-react';
 
+// Content-ops (3-batch dispatch, content studio, creator voice profiles,
+// trade-signal posting, engagement tracking) is paused. Flip to true to
+// bring the content desks back into the nav — the code + routes are intact.
+const SHOW_CONTENT_OPS = false;
+
 export default function Sidebar({ activeTab, setActiveTab, openIssuesCount, mobileOpen, onClose }) {
   const menuItems = [
-    { id: 'dashboard', label: 'Command Center', icon: LayoutDashboard },
-    { id: 'signals', label: 'Trade Signals Desk', icon: BarChart3, badge: 'Trade' },
-    { id: 'affiliates', label: 'Affiliate & Partner Hub', icon: Users, badge: '15%' },
+    { id: 'dashboard', label: 'Team Center', icon: LayoutDashboard },
+    { id: 'finance', label: 'Owner Finance', icon: Wallet, badge: '$' },
     { id: 'vip', label: 'VIP Members Desk', icon: Crown, badge: 'VIP' },
-    { id: 'studio', label: 'Content Studio', icon: CalendarDays, badge: '3-Batch' },
     { id: 'members', label: 'Member Intelligence', icon: Users, badge: 'Live' },
+    { id: 'affiliates', label: 'Affiliate & Partner Hub', icon: Users, badge: '15%' },
     { id: 'reviews', label: 'Review Moderation', icon: Star, badge: 'New' },
-    { id: 'creators', label: 'Creators & Accounts', icon: Users },
-    { id: 'playbooks', label: 'Platforms & Playbooks', icon: Layers },
-    { id: 'logs', label: 'Activity Audit Desk', icon: Activity },
-    { id: 'engagement', label: 'Engagement Hub', icon: MessageSquareCode },
     { id: 'issues', label: 'Issue Resolution Desk', icon: AlertTriangle, count: openIssuesCount, alert: openIssuesCount > 0 },
-    { id: 'analytics', label: 'Conversion Analytics', icon: BarChart3 },
+    { id: 'creators', label: 'Creators & Accounts', icon: Users },
+    ...(SHOW_CONTENT_OPS ? [
+      { id: 'signals', label: 'Trade Signals Desk', icon: BarChart3, badge: 'Trade' },
+      { id: 'studio', label: 'Content Studio', icon: CalendarDays, badge: '3-Batch' },
+      { id: 'playbooks', label: 'Platforms & Playbooks', icon: Layers },
+      { id: 'logs', label: 'Activity Audit Desk', icon: Activity },
+      { id: 'engagement', label: 'Engagement Hub', icon: MessageSquareCode },
+      { id: 'analytics', label: 'Conversion Analytics', icon: BarChart3 },
+    ] : []),
     { id: 'settings', label: 'System Settings', icon: Settings },
   ];
 
   const quickMobileItems = [
-    { id: 'dashboard', label: 'Command', icon: LayoutDashboard },
-    { id: 'studio', label: 'Studio', icon: CalendarDays },
-    { id: 'creators', label: 'Creators', icon: Users },
+    { id: 'dashboard', label: 'Team', icon: LayoutDashboard },
+    { id: 'finance', label: 'Finance', icon: Wallet },
+    { id: 'vip', label: 'VIP', icon: Crown },
+    { id: 'members', label: 'Members', icon: Users },
     { id: 'issues', label: 'Issues', icon: AlertTriangle, count: openIssuesCount },
-    { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
   const handleSelect = (id) => {

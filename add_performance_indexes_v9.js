@@ -30,6 +30,16 @@ if (!DB_CONNECTION) {
   process.exit(1);
 }
 
+// CREATE INDEX CONCURRENTLY cannot run through Supabase's transaction
+// pooler (port 6543) — it errors with 25001 ("CREATE INDEX CONCURRENTLY
+// cannot run inside a transaction block") because the pooler wraps every
+// statement. It must go through the session-mode connection (port 5432).
+if (/:6543\b/.test(DB_CONNECTION)) {
+  console.error('DATABASE_URL points at the transaction pooler (:6543).');
+  console.error('CREATE INDEX CONCURRENTLY needs the session connection (:5432). Aborting.');
+  process.exit(1);
+}
+
 // CREATE INDEX CONCURRENTLY can't run inside a transaction block, and
 // can't run inside a multi-statement string passed to client.query() in
 // one call either — each statement is executed separately below.

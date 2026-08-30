@@ -15,14 +15,9 @@ import {
   Edit3,
   ExternalLink
 } from "lucide-react";
-import { createClient } from "@supabase/supabase-js";
 import { useConfirm } from "../ConfirmDialogProvider";
 import { SkeletonCardGrid } from "../Skeleton";
-
-// Initialize Supabase Client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://ghwvwtwktnveqdqivxmy.supabase.co";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdod3Z3dHdrdG52ZXFkcWl2eG15Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM2MTg1OTgsImV4cCI6MjA2OTE5NDU5OH0.B2zJ9pC0VzZpX1w7gY19aK4q3J3L_7r4V3";
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { supabase } from "../../lib/supabase";
 
 export default function ReviewModerationDeskView() {
   const confirm = useConfirm();

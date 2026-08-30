@@ -5,6 +5,7 @@
 
 try { require('dotenv').config(); } catch(e) {}
 const { Pool } = require('pg');
+const { logMemberEvent } = require('./shared/memberLog.cjs');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
@@ -72,6 +73,12 @@ async function checkVipExpirations() {
 
     for (const m of expiringRes.rows) {
       await runQuery(`UPDATE public.community_members_log SET subscription_status = 'EXPIRING_SOON' WHERE id = $1`, [m.id]);
+      await logMemberEvent(runQuery, {
+        memberId: m.id, telegramUserId: m.telegram_user_id, memberName: m.first_name,
+        type: 'expiring_soon', actor: 'daemon', source: 'VIP_EXPIRATION_CHECKER',
+        note: `Subscription expires ${new Date(m.subscription_expiration_date).toISOString().slice(0, 10)}`,
+        detail: { meta: { subscription_expiration_date: m.subscription_expiration_date } },
+      });
 
       const dateStr = new Date(m.subscription_expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const handleStr = m.telegram_handle ? ` (${m.telegram_handle})` : '';
@@ -101,7 +108,13 @@ async function checkVipExpirations() {
     );
 
     for (const m of expiredRes.rows) {
-      await runQuery(`UPDATE public.community_members_log SET subscription_status = 'EXPIRED' WHERE id = $1`, [m.id]);
+      await runQuery(`UPDATE public.community_members_log SET subscription_status = 'EXPIRED', expired_at = COALESCE(expired_at, NOW()) WHERE id = $1`, [m.id]);
+      await logMemberEvent(runQuery, {
+        memberId: m.id, telegramUserId: m.telegram_user_id, memberName: m.first_name,
+        type: 'expired', actor: 'daemon', source: 'VIP_EXPIRATION_CHECKER',
+        note: `Subscription expired ${new Date(m.subscription_expiration_date).toISOString().slice(0, 10)}`,
+        detail: { meta: { subscription_expiration_date: m.subscription_expiration_date, paid_subscription_value: m.paid_subscription_value } },
+      });
 
       const dateStr = new Date(m.subscription_expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const handleStr = m.telegram_handle ? ` (${m.telegram_handle})` : '';

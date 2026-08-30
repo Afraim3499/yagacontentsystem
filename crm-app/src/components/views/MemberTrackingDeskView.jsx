@@ -1,37 +1,33 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
-import { 
-  Users, 
-  Search, 
-  Filter, 
-  Calendar, 
-  Download, 
-  Link as LinkIcon, 
-  DollarSign, 
-  CheckCircle2, 
-  UserX, 
-  Plus, 
-  Trash2, 
-  Crown, 
-  ExternalLink,
+import {
+  Users,
+  Download,
+  DollarSign,
+  Plus,
+  Trash2,
+  Crown,
   RefreshCw,
   Loader2,
-  Clock,
-  ShieldCheck,
-  Zap,
   Sparkles,
   Edit3,
   Check,
-  X,
   Tag,
   Settings
 } from 'lucide-react';
 import { useConfirm } from '../ConfirmDialogProvider';
-import { SkeletonTableRows } from '../Skeleton';
+import DataTable from '../data/DataTable';
+import FilterBar from '../data/FilterBar';
+import { useTableControls } from '../data/useTableControls';
+import { exportCsv } from '../data/exportCsv';
+import { fmtDateNice } from '../data/dates';
+import { resolveRates, calcCommissions } from '../../lib/commissions';
+import { logMemberEvent, recordMemberPayment } from '../../lib/memberLog';
+import { useMember360 } from '../member360/Member360Context';
 
 export default function MemberTrackingDeskView() {
   const confirm = useConfirm();
+  const { openMember } = useMember360();
   const [activeTab, setActiveTab] = useState("MEMBERS_LOG"); // MEMBERS_LOG | ASSOCIATES_VAULT | SETTINGS_VAULT
   const [membersLog, setMembersLog] = useState([]);
   const [associates, setAssociates] = useState([]);
@@ -40,13 +36,48 @@ export default function MemberTrackingDeskView() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Filters State
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedAssociate, setSelectedAssociate] = useState("ALL");
-  const [selectedTier, setSelectedTier] = useState("ALL"); // ALL | FREE_ONLY | PAID_VIP
-  const [selectedMonth, setSelectedMonth] = useState("ALL");
-  const [selectedStatus, setSelectedStatus] = useState("ALL");
-  const [sortOrder, setSortOrder] = useState("LATEST"); // LATEST | OLDEST | PKG_DESC | PKG_ASC
+  // ── Filter / sort controls (shared infra) ──
+  const tableConfig = useMemo(() => ({
+    urlKey: 'members',
+    searchPlaceholder: 'Search member ID, name, @handle, associate…',
+    searchKeys: ['telegram_user_id', 'telegram_handle', 'first_name', 'associate_name'],
+    filters: [
+      {
+        key: 'associate_id', type: 'multiselect', label: 'Associate', optionsFrom: 'associates',
+        accessor: (m) => m.associate_id || 'DIRECT',
+      },
+      {
+        key: 'member_tier', type: 'select', label: 'All tiers',
+        accessor: (m) => m.member_tier || 'FREE_ONLY',
+        options: [
+          { value: 'FREE_ONLY', label: '🆓 Free group only' },
+          { value: 'PAID_VIP', label: '💎 Paid VIP' },
+          { value: 'PAID_VIP_PENDING', label: '⏳ VIP pending' },
+        ],
+      },
+      {
+        key: 'status', type: 'select', label: 'All member status',
+        options: [
+          { value: 'ACTIVE', label: '✅ Active in group' },
+          { value: 'LEFT', label: '🔴 Left group' },
+        ],
+      },
+      { key: 'value', type: 'numberrange', label: 'VIP $', accessor: (m) => Number(m.paid_subscription_value || 0) },
+      {
+        key: 'joined', type: 'daterange', label: 'Joined',
+        accessor: (m) => m.paid_group_joined_at || m.free_group_joined_at || m.created_at,
+      },
+    ],
+    sortAccessors: {
+      joined_at: (m) => new Date(m.paid_group_joined_at || m.free_group_joined_at || m.created_at || 0).getTime(),
+      value: (m) => Number(m.paid_subscription_value || 0),
+      name: (m) => (m.first_name || '').toLowerCase(),
+      associate: (m) => (m.associate_name || '').toLowerCase(),
+      tier: (m) => (m.member_tier || ''),
+    },
+    defaultSort: [{ key: 'joined_at', dir: 'desc' }],
+  }), []);
+  const controls = useTableControls(tableConfig);
 
   // New Associate Modal State
   const [isAddAssociateModalOpen, setIsAddAssociateModalOpen] = useState(false);
@@ -83,10 +114,6 @@ export default function MemberTrackingDeskView() {
     setTimeout(() => setToast({ show: false, message: '', isError: false }), 4000);
   };
 
-  // Table body scroll container, used by the row virtualizer set up below
-  // (near filteredLog) — declared up top so hooks stay in one place.
-  const memberTableScrollRef = useRef(null);
-
   // Fetch Data from Supabase concurrently across ranges
   const fetchData = async () => {
     setLoading(true);
@@ -108,6 +135,7 @@ export default function MemberTrackingDeskView() {
         const { data: page, error: pageError } = await supabase
           .from('community_members_log')
           .select('*')
+          .is('deleted_at', null)
           .order('created_at', { ascending: false })
           .range(from, from + PAGE_SIZE - 1);
         if (pageError) throw pageError;
@@ -279,16 +307,23 @@ export default function MemberTrackingDeskView() {
     setPackages(prev => prev.filter(p => p.id !== pkgId));
   };
 
-  // Delete Member Entry
+  // Delete Member Entry — soft delete (record + history retained)
   const handleDeleteMember = async (memberLogId, memberName) => {
-    if (!(await confirm(`Are you sure you want to delete member log entry for "${memberName}"?`))) return;
+    if (!(await confirm(`Remove member log entry for "${memberName}"?\n\nSoft delete — the record and its history are kept.`))) return;
     try {
-      const { error } = await supabase.from('community_members_log').delete().eq('id', memberLogId);
+      const member = membersLog.find(m => m.id === memberLogId);
+      const { error } = await supabase.from('community_members_log').update({
+        deleted_at: new Date().toISOString(), deleted_by: 'crm', status: 'LEFT'
+      }).eq('id', memberLogId);
       if (error) throw error;
+      await logMemberEvent({
+        memberId: memberLogId, telegramUserId: member?.telegram_user_id, memberName,
+        type: 'deleted', source: 'CRM_MEMBER_DESK', note: 'Soft-deleted from member log',
+      });
       setMembersLog(prev => prev.filter(m => m.id !== memberLogId));
     } catch (err) {
       console.error('Delete member error:', err);
-      showToast(`❌ Failed to delete member: ${err.message || err}`, true);
+      showToast(`❌ Failed to remove member: ${err.message || err}`, true);
     }
   };
 
@@ -330,7 +365,13 @@ export default function MemberTrackingDeskView() {
       }
     }
 
-    const paidComm = priceVal * (Number(commissionRules.paid_commission_pct) / 100);
+    const rates = resolveRates(
+      associates.find(a => a.id === selectedMemberForVip.associate_id),
+      commissionRules,
+    );
+    const { associate_commission: paidComm, kabidul_commission: kabComm, snapshot } =
+      calcCommissions(priceVal, rates);
+    const now = new Date();
 
     try {
       const { error } = await supabase.from('community_members_log').update({
@@ -339,9 +380,27 @@ export default function MemberTrackingDeskView() {
         package_name: pkgName,
         paid_subscription_value: priceVal,
         paid_commission: paidComm,
-        paid_group_joined_at: new Date().toISOString()
+        kabidul_commission: kabComm,
+        paid_group_joined_at: now.toISOString(),
+        first_converted_at: now.toISOString(),
+        lifetime_value: priceVal
       }).eq('id', selectedMemberForVip.id);
       if (error) throw error;
+
+      const paymentId = await recordMemberPayment({
+        memberId: selectedMemberForVip.id, telegramUserId: selectedMemberForVip.telegram_user_id,
+        memberName: selectedMemberForVip.first_name, paymentType: 'upgrade', amount: priceVal,
+        termStart: now.toISOString(), packageId: selectedPkgId, packageName: pkgName,
+        associateId: selectedMemberForVip.associate_id || null, associateName: selectedMemberForVip.associate_name,
+        associateCommission: paidComm, kabidulCommission: kabComm, commissionSnapshot: snapshot,
+        recordedBy: 'crm', source: 'CRM_MEMBER_DESK',
+      });
+      await logMemberEvent({
+        memberId: selectedMemberForVip.id, telegramUserId: selectedMemberForVip.telegram_user_id,
+        memberName: selectedMemberForVip.first_name, type: 'upgraded', source: 'CRM_MEMBER_DESK',
+        paymentId, note: `Upgraded to VIP — ${pkgName} ($${priceVal})`,
+        detail: { before: { member_tier: selectedMemberForVip.member_tier }, after: { member_tier: 'PAID_VIP', package_name: pkgName, paid_subscription_value: priceVal } },
+      });
 
       await fetchData();
       setIsVipModalOpen(false);
@@ -354,74 +413,8 @@ export default function MemberTrackingDeskView() {
     setSaving(false);
   };
 
-  // Unique Months for Dropdown Filter
-  const availableMonths = useMemo(() => {
-    const months = new Set();
-    membersLog.forEach(m => {
-      const dateStr = m.paid_group_joined_at || m.free_group_joined_at || m.created_at;
-      if (dateStr) {
-        const d = new Date(dateStr);
-        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        months.add(monthKey);
-      }
-    });
-    return Array.from(months).sort().reverse();
-  }, [membersLog]);
-
-  // Filtered Members Log Data
-  const filteredLog = useMemo(() => {
-    const filtered = membersLog.filter(item => {
-      const searchLower = searchTerm.toLowerCase();
-      const matchesSearch = !searchTerm || 
-        item.telegram_user_id?.toLowerCase().includes(searchLower) ||
-        item.telegram_handle?.toLowerCase().includes(searchLower) ||
-        item.first_name?.toLowerCase().includes(searchLower) ||
-        item.associate_name?.toLowerCase().includes(searchLower);
-
-      const matchesAssociate = selectedAssociate === "ALL" || item.associate_id === selectedAssociate || item.associate_name === selectedAssociate;
-      const matchesTier = selectedTier === "ALL" || item.member_tier === selectedTier;
-      const dateStr = item.paid_group_joined_at || item.free_group_joined_at || item.created_at;
-      const matchesMonth = selectedMonth === "ALL" || (dateStr && dateStr.startsWith(selectedMonth));
-      const matchesStatus = selectedStatus === "ALL" || item.status === selectedStatus;
-
-      return matchesSearch && matchesAssociate && matchesTier && matchesMonth && matchesStatus;
-    });
-
-    return [...filtered].sort((a, b) => {
-      if (sortOrder === 'LATEST') {
-        const timeA = new Date(a.paid_group_joined_at || a.free_group_joined_at || a.created_at);
-        const timeB = new Date(b.paid_group_joined_at || b.free_group_joined_at || b.created_at);
-        return timeB - timeA;
-      } else if (sortOrder === 'OLDEST') {
-        const timeA = new Date(a.paid_group_joined_at || a.free_group_joined_at || a.created_at);
-        const timeB = new Date(b.paid_group_joined_at || b.free_group_joined_at || b.created_at);
-        return timeA - timeB;
-      } else if (sortOrder === 'PKG_DESC') {
-        return Number(b.paid_subscription_value || 0) - Number(a.paid_subscription_value || 0);
-      } else if (sortOrder === 'PKG_ASC') {
-        return Number(a.paid_subscription_value || 0) - Number(b.paid_subscription_value || 0);
-      }
-      return 0;
-    });
-  }, [membersLog, searchTerm, selectedAssociate, selectedTier, selectedMonth, selectedStatus, sortOrder]);
-
-  // Virtualize the member log table body — same "spacer <tr>" windowing
-  // technique used and verified on the VIP Members desk: real
-  // <table>/<tr>/<td> markup throughout, dynamic row-height measurement,
-  // no position:absolute on table rows. Replaces the old 100-row-per-page
-  // pagination bar with a real scroll, since virtualization means every
-  // filtered row is always reachable by scrolling instead of paging.
-  const memberRowVirtualizer = useVirtualizer({
-    count: filteredLog.length,
-    getScrollElement: () => memberTableScrollRef.current,
-    estimateSize: () => 76,
-    overscan: 8,
-  });
-  const memberVirtualRows = memberRowVirtualizer.getVirtualItems();
-  const memberPaddingTop = memberVirtualRows.length > 0 ? memberVirtualRows[0].start : 0;
-  const memberPaddingBottom = memberVirtualRows.length > 0
-    ? memberRowVirtualizer.getTotalSize() - memberVirtualRows[memberVirtualRows.length - 1].end
-    : 0;
+  // Filtered + sorted member log (shared client-side controls)
+  const filteredLog = useMemo(() => controls.apply(membersLog), [controls, membersLog]);
 
   // Summary Metrics Calculations
   const freeMembersCount = membersLog.filter(m => m.member_tier === 'FREE_ONLY' || !m.member_tier).length;
@@ -434,33 +427,106 @@ export default function MemberTrackingDeskView() {
   }, 0);
 
 
-  // CSV Export Function
-  const exportCSV = () => {
-    const headers = ['Log ID', 'Telegram User ID', 'First Name', 'Handle', 'Associate Name', 'Member Tier', 'Package', 'VIP Revenue ($)', 'Free Comm ($)', 'Paid 5% Comm ($)', 'Total Comm ($)', 'Join Timestamp'];
-    const rows = filteredLog.map(m => [
-      m.id,
-      m.telegram_user_id,
-      `"${m.first_name || ''}"`,
-      `"${m.telegram_handle || ''}"`,
-      `"${m.associate_name || ''}"`,
-      m.member_tier || 'FREE_ONLY',
-      `"${m.package_name || 'Free Group'}"`,
-      m.paid_subscription_value || 0,
-      m.free_commission || 0.30,
-      m.paid_commission || 0,
-      (Number(m.free_commission || 0.30) + Number(m.paid_commission || 0)).toFixed(2),
-      m.paid_group_joined_at || m.free_group_joined_at || m.created_at
-    ]);
+  // ── Column config — drives both the table and the CSV export ──
+  const memberColumns = useMemo(() => [
+    {
+      key: 'member', header: 'Member ID & Name', sortKey: 'name', width: '20%',
+      csv: (m) => m.first_name || 'Member',
+      render: (m) => (
+        <div className="font-sans">
+          <div className="font-bold text-white text-xs">{m.first_name || 'Member'}</div>
+          <div className="text-[10px] text-[#38bdf8] font-mono">ID: {m.telegram_user_id} {m.telegram_handle}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'associate', header: 'Associate Attribution', sortKey: 'associate',
+      csv: (m) => m.associate_name || 'Unattributed',
+      render: (m) => (
+        <span className={`font-bold font-sans ${m.associate_id ? 'text-[#00d294]' : 'text-slate-400'}`}>
+          {m.associate_name || 'Unattributed'}
+        </span>
+      ),
+    },
+    {
+      key: 'tier', header: 'Member Tier', sortKey: 'tier',
+      csv: (m) => m.member_tier || 'FREE_ONLY',
+      render: (m) => (m.member_tier === 'PAID_VIP' ? (
+        <span className="px-2.5 py-1 rounded text-[10px] font-black bg-gradient-to-r from-[#e39e2e] to-[#d5b895] text-[#0b0e14] uppercase inline-flex items-center gap-1 shadow-md">
+          <Sparkles className="w-3 h-3" /> PAID VIP
+        </span>
+      ) : (
+        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00d294]/15 text-[#00d294] border border-[#00d294]/30 uppercase">
+          {(m.member_tier || 'FREE_ONLY').replace('_', ' ')}
+        </span>
+      )),
+    },
+    {
+      key: 'package', header: 'VIP Package & Revenue ($)', sortKey: 'value',
+      csv: (m) => (m.member_tier === 'PAID_VIP' ? Number(m.paid_subscription_value || 0) : ''),
+      render: (m) => (m.member_tier === 'PAID_VIP' ? (
+        <div className="font-sans">
+          <div className="font-bold text-white text-xs">{m.package_name || 'VIP Package'}</div>
+          <div className="text-[11px] text-[#e39e2e] font-mono font-bold">${Number(m.paid_subscription_value || 0).toFixed(2)}</div>
+        </div>
+      ) : <span className="text-slate-500 text-[11px]">N/A (Free Group)</span>),
+    },
+    {
+      key: 'free_comm', header: 'Free Comm ($30/100)',
+      csv: (m) => Number(m.free_commission || 0.30).toFixed(2),
+      render: (m) => <span className="font-bold text-emerald-400">+${Number(m.free_commission || 0.30).toFixed(2)}</span>,
+    },
+    {
+      key: 'paid_comm', header: 'Paid 5% Comm ($)',
+      csv: (m) => Number(m.paid_commission || 0).toFixed(2),
+      render: (m) => (
+        <span className="font-bold text-[#e39e2e]">
+          {Number(m.paid_commission) > 0 ? `+$${Number(m.paid_commission).toFixed(2)}` : '$0.00'}
+        </span>
+      ),
+    },
+    {
+      key: 'joined', header: 'Joined Timestamps', sortKey: 'joined_at',
+      csv: (m) => fmtDateNice(m.paid_group_joined_at || m.free_group_joined_at || m.created_at),
+      render: (m) => (
+        <div className="text-slate-300 text-[10px]">
+          <div>Free: {m.free_group_joined_at ? fmtDateNice(m.free_group_joined_at) : 'N/A'}</div>
+          {m.paid_group_joined_at && <div className="text-[#e39e2e]">VIP: {fmtDateNice(m.paid_group_joined_at)}</div>}
+        </div>
+      ),
+    },
+    { key: 'status', header: 'Status', csv: (m) => m.status || 'ACTIVE' },
+    { key: 'log_id', header: 'Log ID', csv: (m) => m.id },
+    {
+      key: 'actions', header: 'Action', align: 'right',
+      render: (m) => (
+        <div className="flex items-center justify-end gap-2">
+          {m.member_tier !== 'PAID_VIP' && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedMemberForVip(m);
+                setSelectedPkgId(packages[0]?.id || 'CUSTOM');
+                setIsVipModalOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-lg bg-[#e39e2e]/15 hover:bg-[#e39e2e] text-[#e39e2e] hover:text-[#0b0e14] font-bold text-[10px] uppercase border border-[#e39e2e]/40 transition-all cursor-pointer inline-flex items-center gap-1"
+            >
+              <Sparkles className="w-3 h-3" /> Upgrade VIP
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); handleDeleteMember(m.id, m.first_name || 'Member'); }}
+            className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all cursor-pointer"
+            title="Delete Member Entry"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ),
+    },
+  ], [packages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `community_member_tracking_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const exportCSV = () => exportCsv(filteredLog, memberColumns, 'community_member_tracking');
 
   return (
     <div className="space-y-6">
@@ -591,222 +657,36 @@ export default function MemberTrackingDeskView() {
         {/* TAB 1: MEMBERS JOIN & VIP CONVERSION LOG */}
         {activeTab === "MEMBERS_LOG" && (
           <div className="space-y-5">
-            {/* Multi-Filter Controls */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 bg-[#080a0f] p-4 rounded-2xl border border-white/10">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search Member ID / Name..."
-                  className="w-full bg-[#121722] text-slate-100 text-xs pl-9 pr-3 py-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-mono"
-                />
-              </div>
+            <FilterBar
+              config={tableConfig}
+              controls={controls}
+              associates={associates}
+              facets={controls.facetCounts(membersLog)}
+              matched={filteredLog.length}
+              total={membersLog.length}
+            />
 
-              <div>
-                <select
-                  value={selectedAssociate}
-                  onChange={(e) => setSelectedAssociate(e.target.value)}
-                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer"
-                >
-                  <option value="ALL">👤 All Associates</option>
-                  {associates.map(asc => (
-                    <option key={asc.id} value={asc.id}>{asc.name}</option>
-                  ))}
-                  <option value="Unattributed / Direct">Unattributed / Direct</option>
-                </select>
-              </div>
+            <DataTable
+              rows={filteredLog}
+              columns={memberColumns}
+              sort={controls.sort}
+              onToggleSort={controls.toggleSort}
+              loading={loading}
+              estimateRowHeight={64}
+              rowKey={(m) => m.id}
+              onRowClick={(m) => openMember(m.id, { onAfterChange: fetchData })}
+              emptyState={(
+                <div className="py-16 text-center text-slate-500 space-y-2">
+                  <Users className="w-12 h-12 mx-auto text-slate-600" />
+                  <p className="text-sm font-semibold">No member entries found matching filters.</p>
+                </div>
+              )}
+            />
 
-              <div>
-                <select
-                  value={selectedTier}
-                  onChange={(e) => setSelectedTier(e.target.value)}
-                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer"
-                >
-                  <option value="ALL">⚡ All Member Tiers</option>
-                  <option value="FREE_ONLY">🆓 Free Group Only</option>
-                  <option value="PAID_VIP">💎 Upgraded to Paid VIP</option>
-                </select>
-              </div>
-
-              <div>
-                <select
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer font-mono"
-                >
-                  <option value="ALL">📅 All Months & Dates</option>
-                  {availableMonths.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <select
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer"
-                >
-                  <option value="ALL">⚡ All Member Status</option>
-                  <option value="ACTIVE">✅ Active in Group</option>
-                  <option value="LEFT">🔴 Left Group</option>
-                </select>
-              </div>
-
-              <div>
-                <select
-                  value={sortOrder}
-                  onChange={(e) => setSortOrder(e.target.value)}
-                  className="w-full bg-[#121722] text-slate-200 text-xs p-2.5 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none cursor-pointer"
-                >
-                  <option value="LATEST">📅 Latest Joined</option>
-                  <option value="OLDEST">📅 Oldest Joined</option>
-                  <option value="PKG_DESC">💰 Highest to Lowest Package</option>
-                  <option value="PKG_ASC">💰 Lowest to Highest Package</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Data Table */}
-            {loading ? (
-              <div className="overflow-x-auto rounded-2xl border border-white/10">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
-                    <tr>
-                      <th scope="col" className="p-3.5">Member ID & Name</th>
-                      <th scope="col" className="p-3.5">Associate Attribution</th>
-                      <th scope="col" className="p-3.5">Member Tier</th>
-                      <th scope="col" className="p-3.5">VIP Package & Revenue ($)</th>
-                      <th scope="col" className="p-3.5">Free Comm ($30/100)</th>
-                      <th scope="col" className="p-3.5">Paid 5% Comm ($)</th>
-                      <th scope="col" className="p-3.5">Joined Timestamps</th>
-                      <th scope="col" className="p-3.5">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5 font-mono">
-                    <SkeletonTableRows columns={8} rows={8} cellClassName="p-3.5" />
-                  </tbody>
-                </table>
-              </div>
-            ) : filteredLog.length === 0 ? (
-              <div className="py-16 text-center text-slate-500 space-y-2">
-                <Users className="w-12 h-12 mx-auto text-slate-600" />
-                <p className="text-sm font-semibold">No member entries found matching filters.</p>
-              </div>
-            ) : (
-              <>
-                <div ref={memberTableScrollRef} className="overflow-auto max-h-[70vh] rounded-2xl border border-white/10">
-
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="sticky top-0 z-10 bg-[#080a0f] text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-white/10">
-                    <tr>
-                      <th scope="col" className="p-3.5">Member ID & Name</th>
-                      <th scope="col" className="p-3.5">Associate Attribution</th>
-                      <th scope="col" className="p-3.5">Member Tier</th>
-                      <th scope="col" className="p-3.5">VIP Package & Revenue ($)</th>
-                      <th scope="col" className="p-3.5">Free Comm ($30/100)</th>
-                      <th scope="col" className="p-3.5">Paid 5% Comm ($)</th>
-                      <th scope="col" className="p-3.5">Joined Timestamps</th>
-                      <th scope="col" className="p-3.5">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5 font-mono">
-                    {memberPaddingTop > 0 && (
-                      <tr aria-hidden="true" style={{ height: `${memberPaddingTop}px` }}>
-                        <td colSpan={8} style={{ padding: 0, border: 'none' }} />
-                      </tr>
-                    )}
-                    {memberVirtualRows.map((virtualRow) => {
-                      const item = filteredLog[virtualRow.index];
-                      const totalComm = (Number(item.free_commission || 0.30) + Number(item.paid_commission || 0)).toFixed(2);
-                      const isVip = item.member_tier === 'PAID_VIP';
-
-                      return (
-                        <tr
-                          key={item.id}
-                          data-index={virtualRow.index}
-                          ref={memberRowVirtualizer.measureElement}
-                          className="hover:bg-[#121722] transition-colors"
-                        >
-                          <td className="p-3.5 font-sans">
-                            <div className="font-bold text-white text-xs">{item.first_name || 'Member'}</div>
-                            <div className="text-[10px] text-[#38bdf8] font-mono">ID: {item.telegram_user_id} {item.telegram_handle}</div>
-                          </td>
-                          <td className="p-3.5 font-sans">
-                            <span className={`font-bold ${item.associate_id ? 'text-[#00d294]' : 'text-slate-400'}`}>
-                              {item.associate_name || 'Unattributed'}
-                            </span>
-                          </td>
-                          <td className="p-3.5">
-                            {isVip ? (
-                              <span className="px-2.5 py-1 rounded text-[10px] font-black bg-gradient-to-r from-[#e39e2e] to-[#d5b895] text-[#0b0e14] uppercase flex items-center gap-1 w-max shadow-md">
-                                <Sparkles className="w-3 h-3" /> PAID VIP
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00d294]/15 text-[#00d294] border border-[#00d294]/30 uppercase">
-                                FREE ONLY
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3.5 font-sans">
-                            {isVip ? (
-                              <div>
-                                <div className="font-bold text-white text-xs">{item.package_name || 'VIP Package'}</div>
-                                <div className="text-[11px] text-[#e39e2e] font-mono font-bold">${Number(item.paid_subscription_value || 200).toFixed(2)}</div>
-                              </div>
-                            ) : (
-                              <span className="text-slate-500 text-[11px]">N/A (Free Group)</span>
-                            )}
-                          </td>
-                          <td className="p-3.5 font-bold text-emerald-400">+${Number(item.free_commission || 0.30).toFixed(2)}</td>
-                          <td className="p-3.5 font-bold text-[#e39e2e]">
-                            {Number(item.paid_commission) > 0 ? `+$${Number(item.paid_commission).toFixed(2)}` : '$0.00'}
-                          </td>
-                          <td className="p-3.5 text-slate-300 text-[10px]">
-                            <div>Free: {item.free_group_joined_at ? new Date(item.free_group_joined_at).toLocaleDateString() : 'N/A'}</div>
-                            {item.paid_group_joined_at && <div className="text-[#e39e2e]">VIP: {new Date(item.paid_group_joined_at).toLocaleDateString()}</div>}
-                          </td>
-                          <td className="p-3.5 flex items-center gap-2">
-                            {!isVip && (
-                              <button
-                                onClick={() => {
-                                  setSelectedMemberForVip(item);
-                                  setSelectedPkgId(packages[0]?.id || "CUSTOM");
-                                  setIsVipModalOpen(true);
-                                }}
-                                className="px-3 py-1.5 rounded-lg bg-[#e39e2e]/15 hover:bg-[#e39e2e] text-[#e39e2e] hover:text-[#0b0e14] font-bold text-[10px] uppercase border border-[#e39e2e]/40 transition-all cursor-pointer flex items-center gap-1"
-                              >
-                                <Sparkles className="w-3 h-3" /> Upgrade VIP
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleDeleteMember(item.id, item.first_name || 'Member')}
-                              className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all cursor-pointer flex items-center gap-1"
-                              title="Delete Member Entry"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {memberPaddingBottom > 0 && (
-                      <tr aria-hidden="true" style={{ height: `${memberPaddingBottom}px` }}>
-                        <td colSpan={8} style={{ padding: 0, border: 'none' }} />
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <p className="text-center text-[11px] text-slate-500 font-mono py-2">
-                Showing all {filteredLog.length} members — scroll to load more rows
-              </p>
-            </>
-          )}
-
+            <p className="text-center text-[11px] text-slate-500 font-mono py-2">
+              Showing {filteredLog.length} of {membersLog.length} members
+              {controls.activeCount > 0 ? ' (filtered)' : ''} — scroll for more
+            </p>
           </div>
         )}
 
@@ -1051,9 +931,15 @@ export default function MemberTrackingDeskView() {
                   onChange={(e) => setSelectedPkgId(e.target.value)}
                   className="w-full bg-[#080a0f] text-slate-100 p-3 rounded-xl border border-white/10 focus:border-[#e39e2e] focus:outline-none font-bold"
                 >
-                  {packages.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} — ${p.price} (5% Comm = ${(Number(p.price)*0.05).toFixed(2)})</option>
-                  ))}
+                  {packages.map(p => {
+                    const rt = resolveRates(associates.find(a => a.id === selectedMemberForVip?.associate_id), commissionRules);
+                    const cc = calcCommissions(Number(p.price), rt);
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — ${p.price} ({rt.associate_pct}% Comm = ${cc.associate_commission.toFixed(2)})
+                      </option>
+                    );
+                  })}
                   <option value="CUSTOM">💎 Custom Deal Amount ($)</option>
                 </select>
               </div>

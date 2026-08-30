@@ -1,48 +1,100 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
-import { 
-  Crown, 
-  Users, 
-  Search, 
-  Filter, 
-  Download, 
-  DollarSign, 
-  CheckCircle2, 
-  Plus, 
-  Trash2, 
-  RefreshCw, 
-  Loader2, 
-  Sparkles, 
-  Zap, 
+import {
+  Crown,
+  Users,
+  Download,
+  DollarSign,
+  CheckCircle2,
+  Plus,
+  Trash2,
+  RefreshCw,
+  Sparkles,
   ShieldCheck,
   Edit3,
-  UserCheck,
   Calendar,
   Clock,
   AlertTriangle,
   RotateCw,
   Briefcase,
-  Gift,
-  X,
-  Edit
+  X
 } from 'lucide-react';
 import { useConfirm } from '../ConfirmDialogProvider';
-import { SkeletonTableRows } from '../Skeleton';
+import DataTable from '../data/DataTable';
+import FilterBar from '../data/FilterBar';
+import { useTableControls } from '../data/useTableControls';
+import { exportCsv } from '../data/exportCsv';
+import { computeLiveStatus, LIVE_STATUS_LABEL, fmtDateNice } from '../data/dates';
+import { resolveRates, calcCommissions, DEFAULT_RATES } from '../../lib/commissions';
+import { logMemberEvent, recordMemberPayment, diffFields } from '../../lib/memberLog';
+import { renewMember } from '../../lib/memberActions';
+import { useMember360 } from '../member360/Member360Context';
 
 export default function VipMembersDeskView() {
   const confirm = useConfirm();
+  const { openMember } = useMember360();
   const [vipMembers, setVipMembers] = useState([]);
   const [associates, setAssociates] = useState([]);
+  const [commissionRules, setCommissionRules] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Filters State
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedAssociate, setSelectedAssociate] = useState("ALL");
-  const [selectedPackage, setSelectedPackage] = useState("ALL");
-  const [selectedStatus, setSelectedStatus] = useState("ALL"); // ALL | ACTIVE | EXPIRING_SOON | EXPIRED
-  const [sortOrder, setSortOrder] = useState("LATEST"); // LATEST | OLDEST | PKG_DESC | PKG_ASC
+  // Resolve the commission rates for a given associate id (override → rules → default)
+  const ratesFor = (associateId) =>
+    resolveRates(associates.find((a) => a.id === associateId), commissionRules);
+
+  // ── Filter / sort controls (shared infra) ──
+  const tableConfig = useMemo(() => ({
+    urlKey: 'vip',
+    searchPlaceholder: 'Search member name, @handle, ID, associate…',
+    searchKeys: ['first_name', 'telegram_handle', 'telegram_user_id', 'associate_name'],
+    filters: [
+      {
+        key: 'live_status', type: 'select', label: 'All statuses',
+        accessor: (m) => computeLiveStatus(m),
+        options: [
+          { value: 'ACTIVE', label: '🟢 Active' },
+          { value: 'EXPIRING_SOON', label: '⚠️ Expiring soon (≤7d)' },
+          { value: 'EXPIRED', label: '🔴 Expired' },
+        ],
+      },
+      {
+        key: 'associate_id', type: 'multiselect', label: 'Associate', optionsFrom: 'associates',
+        accessor: (m) => m.associate_id || 'DIRECT',
+      },
+      {
+        key: 'package', type: 'select', label: 'All tiers',
+        accessor: (m) => {
+          const v = Number(m.paid_subscription_value || 0);
+          if (v === 200) return '200';
+          if (v === 250) return '250';
+          if (v === 350) return '350';
+          if (v === 700) return '700';
+          return v > 0 ? 'CUSTOM' : '0';
+        },
+        options: [
+          { value: '200', label: '$200' },
+          { value: '250', label: '$250 (Quarterly)' },
+          { value: '350', label: '$350 (Half-Yearly)' },
+          { value: '700', label: '$700 (Yearly)' },
+          { value: 'CUSTOM', label: 'Custom tier' },
+        ],
+      },
+      { key: 'value', type: 'numberrange', label: 'Value $', accessor: (m) => Number(m.paid_subscription_value || 0) },
+      { key: 'duration', type: 'numberrange', label: 'Months', accessor: (m) => Number(m.subscription_duration_months || 0) },
+      { key: 'joined', type: 'daterange', label: 'Joined', accessor: (m) => m.paid_group_joined_at || m.created_at },
+      { key: 'expires', type: 'daterange', label: 'Expires', accessor: (m) => m.subscription_expiration_date },
+    ],
+    sortAccessors: {
+      joined_at: (m) => new Date(m.paid_group_joined_at || m.created_at || 0).getTime(),
+      expires_at: (m) => new Date(m.subscription_expiration_date || 0).getTime(),
+      value: (m) => Number(m.paid_subscription_value || 0),
+      name: (m) => (m.first_name || '').toLowerCase(),
+      associate: (m) => (m.associate_name || '').toLowerCase(),
+    },
+    defaultSort: [{ key: 'joined_at', dir: 'desc' }],
+  }), []);
+  const controls = useTableControls(tableConfig);
 
   // Manual VIP Enroll Modal State
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
@@ -94,6 +146,7 @@ export default function VipMembersDeskView() {
           .from('community_members_log')
           .select('*')
           .or('member_tier.eq.PAID_VIP,member_tier.eq.PAID_VIP_PENDING')
+          .is('deleted_at', null)
           .order('created_at', { ascending: false })
           .range(from, from + PAGE_SIZE - 1);
         if (memErr) {
@@ -115,6 +168,10 @@ export default function VipMembersDeskView() {
       if (ascErr) console.error('Error fetching associates:', ascErr);
       else setAssociates(ascData || []);
 
+      const { data: ruleData } = await supabase
+        .from('commission_rules').select('*').eq('id', 'RULE-DEFAULT').maybeSingle();
+      if (ruleData) setCommissionRules(ruleData);
+
     } catch (err) {
       console.error('fetchVipData exception:', err);
     } finally {
@@ -128,67 +185,8 @@ export default function VipMembersDeskView() {
     fetchVipData();
   };
 
-  // Filtered VIP Members
-  const filteredVips = useMemo(() => {
-    const filtered = vipMembers.filter(m => {
-      const search = searchTerm.toLowerCase().trim();
-      const matchesSearch = !search || 
-        (m.first_name && m.first_name.toLowerCase().includes(search)) ||
-        (m.telegram_handle && m.telegram_handle.toLowerCase().includes(search)) ||
-        (m.telegram_user_id && m.telegram_user_id.includes(search)) ||
-        (m.associate_name && m.associate_name.toLowerCase().includes(search));
-
-      const matchesAssociate = selectedAssociate === "ALL" || m.associate_id === selectedAssociate || (selectedAssociate === "DIRECT" && !m.associate_id);
-
-      const val = Number(m.paid_subscription_value || 0);
-      let matchesPackage = true;
-      if (selectedPackage === "250") matchesPackage = val === 250;
-      else if (selectedPackage === "350") matchesPackage = val === 350;
-      else if (selectedPackage === "700") matchesPackage = val === 700;
-      else if (selectedPackage === "CUSTOM") matchesPackage = val > 0 && val !== 250 && val !== 350 && val !== 700;
-
-      // Status Filter (ACTIVE | EXPIRING_SOON | EXPIRED)
-      const matchesStatus = selectedStatus === "ALL" || (m.subscription_status || 'ACTIVE') === selectedStatus;
-
-      return matchesSearch && matchesAssociate && matchesPackage && matchesStatus;
-    });
-
-    return [...filtered].sort((a, b) => {
-      if (sortOrder === 'LATEST') {
-        const timeA = new Date(a.paid_group_joined_at || a.created_at);
-        const timeB = new Date(b.paid_group_joined_at || b.created_at);
-        return timeB - timeA;
-      } else if (sortOrder === 'OLDEST') {
-        const timeA = new Date(a.paid_group_joined_at || a.created_at);
-        const timeB = new Date(b.paid_group_joined_at || b.created_at);
-        return timeA - timeB;
-      } else if (sortOrder === 'PKG_DESC') {
-        return Number(b.paid_subscription_value || 0) - Number(a.paid_subscription_value || 0);
-      } else if (sortOrder === 'PKG_ASC') {
-        return Number(a.paid_subscription_value || 0) - Number(b.paid_subscription_value || 0);
-      }
-      return 0;
-    });
-  }, [vipMembers, searchTerm, selectedAssociate, selectedPackage, selectedStatus, sortOrder]);
-
-  // Virtualize the roster table body — filteredVips can run into the
-  // thousands, and only the rows actually scrolled into view are ever
-  // mounted in the DOM. Uses the "spacer <tr>" windowing technique (real
-  // <table>/<tr>/<td> markup throughout, no position:absolute on table
-  // rows) since absolutely-positioned <tr> elements are unreliable across
-  // browsers inside native table layout.
-  const tableScrollRef = useRef(null);
-  const rowVirtualizer = useVirtualizer({
-    count: filteredVips.length,
-    getScrollElement: () => tableScrollRef.current,
-    estimateSize: () => 88,
-    overscan: 8,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const virtualPaddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const virtualPaddingBottom = virtualRows.length > 0
-    ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
-    : 0;
+  // Filtered + sorted VIP roster (shared client-side controls)
+  const filteredVips = useMemo(() => controls.apply(vipMembers), [controls, vipMembers]);
 
   // Overall Stat Calculations
   const stats = useMemo(() => {
@@ -199,15 +197,16 @@ export default function VipMembersDeskView() {
     let expiringCount = 0;
     let expiredCount = 0;
 
+    const now = new Date();
     vipMembers.forEach(m => {
       const val = Number(m.paid_subscription_value || 0);
-      const comm = Number(m.paid_commission || (val * 0.05));
-      const kabComm = Number(m.kabidul_commission || (val * 0.25));
+      const comm = Number(m.paid_commission || val * DEFAULT_RATES.associate_pct / 100);
+      const kabComm = Number(m.kabidul_commission || val * DEFAULT_RATES.kabidul_pct / 100);
       totalRevenue += val;
       totalCommission += comm;
       totalKabidulCommission += kabComm;
 
-      const st = m.subscription_status || 'ACTIVE';
+      const st = computeLiveStatus(m, now);
       if (st === 'EXPIRING_SOON') expiringCount++;
       else if (st === 'EXPIRED') expiredCount++;
       else activeCount++;
@@ -245,8 +244,9 @@ export default function VipMembersDeskView() {
     setEditExpirationDate(expStr);
 
     setEditStatus(m.subscription_status || "ACTIVE");
-    setEditAssociateComm(m.paid_commission || (subVal * 0.05).toFixed(2));
-    setEditKabidulComm(m.kabidul_commission || (subVal * 0.25).toFixed(2));
+    const c = calcCommissions(subVal, ratesFor(m.associate_id));
+    setEditAssociateComm(m.paid_commission || c.associate_commission.toFixed(2));
+    setEditKabidulComm(m.kabidul_commission || c.kabidul_commission.toFixed(2));
 
     setIsEditModalOpen(true);
   };
@@ -254,9 +254,9 @@ export default function VipMembersDeskView() {
   // Helper when Package Sub Value changes in Edit Modal
   const handleEditSubValChange = (val) => {
     setEditSubVal(val);
-    const num = Number(val) || 0;
-    setEditAssociateComm((num * 0.05).toFixed(2));
-    setEditKabidulComm((num * 0.25).toFixed(2));
+    const c = calcCommissions(Number(val) || 0, ratesFor(editAssociateId));
+    setEditAssociateComm(c.associate_commission.toFixed(2));
+    setEditKabidulComm(c.kabidul_commission.toFixed(2));
   };
 
   // Save Edit Changes Handler
@@ -275,7 +275,7 @@ export default function VipMembersDeskView() {
     const joinedDateObj = editJoinedDate ? new Date(`${editJoinedDate}T12:00:00`) : new Date();
     const expDateObj = editExpirationDate ? new Date(`${editExpirationDate}T12:00:00`) : new Date();
 
-    const { error } = await supabase.from('community_members_log').update({
+    const after = {
       first_name: editName.trim(),
       telegram_handle: editHandle.startsWith('@') ? editHandle : (editHandle ? `@${editHandle}` : ''),
       telegram_user_id: editUserId.trim(),
@@ -289,11 +289,35 @@ export default function VipMembersDeskView() {
       subscription_expiration_date: expDateObj.toISOString(),
       subscription_status: editStatus,
       status: editStatus === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE'
-    }).eq('id', editingMember.id);
+    };
+    const { error } = await supabase.from('community_members_log').update(after).eq('id', editingMember.id);
 
     if (error) {
       alert('Error updating member details: ' + error.message);
     } else {
+      const diff = diffFields(editingMember, after, [
+        'first_name', 'telegram_handle', 'telegram_user_id', 'associate_name',
+        'paid_subscription_value', 'paid_commission', 'kabidul_commission',
+        'subscription_duration_months', 'subscription_expiration_date', 'subscription_status',
+      ]);
+      await logMemberEvent({
+        memberId: editingMember.id, telegramUserId: after.telegram_user_id, memberName: editName.trim(),
+        type: 'edited', source: 'CRM_VIP_DESK', note: `Edited ${Object.keys(diff).length} field(s)`,
+        detail: { diff },
+      });
+      // A price / associate change on an existing term is a money adjustment
+      const priceChanged = Number(editingMember.paid_subscription_value || 0) !== subVal;
+      if (priceChanged) {
+        await recordMemberPayment({
+          memberId: editingMember.id, telegramUserId: after.telegram_user_id, memberName: editName.trim(),
+          paymentType: 'adjustment', amount: subVal - Number(editingMember.paid_subscription_value || 0),
+          durationMonths: months, termEnd: expDateObj.toISOString(),
+          associateId: editAssociateId || null, associateName: ascName,
+          associateCommission: commVal - Number(editingMember.paid_commission || 0),
+          kabidulCommission: kabCommVal - Number(editingMember.kabidul_commission || 0),
+          recordedBy: 'crm', source: 'CRM_VIP_DESK', note: 'Manual edit — subscription value changed',
+        });
+      }
       alert(`🎉 Successfully updated ${editName || 'Member'}! Details synced live to database & CRM.`);
       setIsEditModalOpen(false);
       setEditingMember(null);
@@ -307,9 +331,9 @@ export default function VipMembersDeskView() {
     if (!memberName) return alert('Please enter member name.');
 
     const subVal = Number(subscriptionValue) || 350;
-    const commVal = Number((subVal * 0.05).toFixed(2));
-    const kabidulCommVal = Number((subVal * 0.25).toFixed(2));
     const months = Number(durationMonths) || 6;
+    const { associate_commission: commVal, kabidul_commission: kabidulCommVal, snapshot } =
+      calcCommissions(subVal, ratesFor(targetAssociateId));
 
     const selectedAscObj = associates.find(a => a.id === targetAssociateId);
     const ascName = selectedAscObj ? selectedAscObj.name : 'Unattributed / Direct';
@@ -339,13 +363,30 @@ export default function VipMembersDeskView() {
       group_id: '-1002607815374',
       subscription_duration_months: months,
       subscription_expiration_date: expDate.toISOString(),
-      subscription_status: 'ACTIVE'
+      subscription_status: 'ACTIVE',
+      first_converted_at: now.toISOString(),
+      lifetime_value: subVal,
+      renewal_count: 0
     }]);
 
     if (error) {
       alert('Error enrolling VIP member: ' + error.message);
     } else {
-      alert(`🎉 Successfully Enrolled VIP Member: ${memberName} ($${subVal} Tier - ${months} Months)!\n💼 Kabidul's 25% Commission: $${kabidulCommVal}`);
+      const paymentId = await recordMemberPayment({
+        memberId: logId, telegramUserId: userId, memberName: memberName.trim(),
+        paymentType: 'new', amount: subVal, durationMonths: months,
+        termStart: now.toISOString(), termEnd: expDate.toISOString(),
+        associateId: targetAssociateId || null, associateName: ascName,
+        associateCommission: commVal, kabidulCommission: kabidulCommVal,
+        commissionSnapshot: snapshot, recordedBy: 'crm', source: 'CRM_VIP_DESK',
+      });
+      await logMemberEvent({
+        memberId: logId, telegramUserId: userId, memberName: memberName.trim(),
+        type: 'enrolled', source: 'CRM_VIP_DESK', paymentId,
+        note: `Enrolled at $${subVal} for ${months} months`,
+        detail: { after: { paid_subscription_value: subVal, months, associate: ascName } },
+      });
+      alert(`🎉 Successfully Enrolled VIP Member: ${memberName} ($${subVal} Tier - ${months} Months)!\n💼 Kabidul's ${snapshot.kabidul_pct}% Commission: $${kabidulCommVal}`);
       setIsEnrollModalOpen(false);
       setMemberName("");
       setTelegramHandle("");
@@ -355,78 +396,166 @@ export default function VipMembersDeskView() {
     }
   }
 
-  // Renewal Handler
+  // Renewal Handler — delegates to the shared lifecycle action so the CRM
+  // desk, the Member 360 panel, and the bot all renew the same way.
   async function handleRenewSubscription(e) {
     e.preventDefault();
     if (!renewingMember) return;
 
-    const subVal = Number(renewTierValue) || 350;
-    const commVal = Number((subVal * 0.05).toFixed(2));
-    const kabidulCommVal = Number((subVal * 0.25).toFixed(2));
     const months = Number(renewDurationMonths) || 6;
-
-    const now = new Date();
-    const newExpDate = new Date(now);
-    newExpDate.setMonth(newExpDate.getMonth() + months);
-
-    const { error } = await supabase.from('community_members_log').update({
-      paid_subscription_value: subVal,
-      paid_commission: commVal,
-      kabidul_commission: kabidulCommVal,
-      subscription_duration_months: months,
-      subscription_expiration_date: newExpDate.toISOString(),
-      subscription_status: 'ACTIVE',
-      status: 'ACTIVE'
-    }).eq('id', renewingMember.id);
-
-    if (error) {
-      alert('Error renewing subscription: ' + error.message);
+    const res = await renewMember(renewingMember, {
+      tierValue: renewTierValue, months, associates, commissionRules, source: 'CRM_VIP_DESK',
+    });
+    if (res?.error) {
+      alert('Error renewing subscription: ' + res.error.message);
     } else {
-      alert(`🎉 Renewed ${renewingMember.first_name}'s VIP Subscription for ${months} Months!\n💼 Kabidul's 25% Commission: $${kabidulCommVal}`);
+      alert(`🎉 Renewed ${renewingMember.first_name}'s VIP Subscription for ${months} Months!\n💼 Kabidul's commission: $${Number(res.kabidul_commission || 0).toFixed(2)}`);
       setIsRenewModalOpen(false);
       setRenewingMember(null);
       fetchVipData();
     }
   }
 
-  // Delete Member Handler
+  // Delete Member Handler — soft delete (keeps the row + its history)
   async function handleDeleteMember(memberId, name) {
-    if (!(await confirm(`⚠️ Are you sure you want to delete VIP member "${name}"?`))) return;
+    if (!(await confirm(`⚠️ Remove VIP member "${name}" from the roster?\n\nThis is a soft delete — the record and its history are kept and can be restored.`))) return;
 
-    const { error } = await supabase.from('community_members_log').delete().eq('id', memberId);
+    const member = vipMembers.find(m => m.id === memberId);
+    const { error } = await supabase.from('community_members_log').update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: 'crm',
+      status: 'LEFT'
+    }).eq('id', memberId);
     if (error) {
-      alert('Error deleting member: ' + error.message);
+      alert('Error removing member: ' + error.message);
     } else {
+      await logMemberEvent({
+        memberId, telegramUserId: member?.telegram_user_id, memberName: name,
+        type: 'deleted', source: 'CRM_VIP_DESK', note: 'Soft-deleted from VIP roster',
+      });
       setVipMembers(prev => prev.filter(m => m.id !== memberId));
     }
   }
 
-  // Export CSV Handler
+  // ── Column config — drives both the table and the CSV export ──
+  const columns = useMemo(() => [
+    {
+      key: 'member', header: 'Member Info', sortKey: 'name', width: '22%',
+      csv: (m) => m.first_name || 'VIP Member',
+      render: (m) => (
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500/20 to-yellow-500/10 border border-amber-500/30 flex items-center justify-center font-bold text-amber-400 text-sm shrink-0">
+            {m.first_name ? m.first_name.charAt(0).toUpperCase() : 'V'}
+          </div>
+          <div className="min-w-0">
+            <div className="font-semibold text-slate-200 truncate">{m.first_name || 'VIP Member'}</div>
+            <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+              {m.telegram_handle && <span className="text-amber-400/80 truncate">{m.telegram_handle}</span>}
+              {m.telegram_user_id && <span className="text-slate-600 font-mono text-[10px]">ID: {m.telegram_user_id}</span>}
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'associate', header: 'Referred Associate', sortKey: 'associate',
+      csv: (m) => m.associate_name || 'Unattributed / Direct',
+      render: (m) => (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/60 border border-slate-700/50 text-xs font-medium text-slate-300">
+          <Users className="w-3.5 h-3.5 text-amber-400" />
+          {m.associate_name || 'Unattributed / Direct'}
+        </span>
+      ),
+    },
+    {
+      key: 'package', header: 'Package & Duration', sortKey: 'value',
+      csv: (m) => `$${Number(m.paid_subscription_value || 0)} / ${m.subscription_duration_months || 6}mo`,
+      render: (m) => {
+        const val = Number(m.paid_subscription_value || 0);
+        const dur = m.subscription_duration_months || 6;
+        const promo = dur === 8 || dur === 14;
+        return (
+          <div className="font-semibold text-emerald-400 flex items-center gap-1">
+            <DollarSign className="w-4 h-4 stroke-[2.5]" />{val}
+            <span className="text-xs font-normal text-slate-400 ml-1">({dur} Months {promo ? '🎁' : ''})</span>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'dates', header: 'Joined & Expiration', sortKey: 'joined_at',
+      csv: (m) => fmtDateNice(m.paid_group_joined_at || m.created_at),
+      render: (m) => {
+        const exp = m.subscription_expiration_date ? new Date(m.subscription_expiration_date) : null;
+        return (
+          <div className="text-xs space-y-0.5">
+            <div className="text-slate-300 flex items-center gap-1"><Calendar className="w-3 h-3 text-slate-500" />Joined: {fmtDateNice(m.paid_group_joined_at || m.created_at)}</div>
+            <div className="text-slate-400 flex items-center gap-1"><Clock className="w-3 h-3 text-amber-400" />Expires: {exp ? fmtDateNice(exp) : 'N/A'}</div>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'status', header: 'Status', sortKey: 'expires_at',
+      csv: (m) => LIVE_STATUS_LABEL[computeLiveStatus(m)],
+      render: (m) => {
+        const st = computeLiveStatus(m);
+        if (st === 'EXPIRING_SOON') return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-semibold"><AlertTriangle className="w-3.5 h-3.5" /> Expiring Soon</span>;
+        if (st === 'EXPIRED') return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-semibold"><Clock className="w-3.5 h-3.5" /> Expired</span>;
+        return <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold"><CheckCircle2 className="w-3.5 h-3.5" /> Active</span>;
+      },
+    },
+    {
+      key: 'commissions', header: 'Commissions (5% / 25%)',
+      csv: (m) => {
+        const val = Number(m.paid_subscription_value || 0);
+        return `${Number(m.paid_commission || val * DEFAULT_RATES.associate_pct / 100).toFixed(2)} / ${Number(m.kabidul_commission || val * DEFAULT_RATES.kabidul_pct / 100).toFixed(2)}`;
+      },
+      render: (m) => {
+        const val = Number(m.paid_subscription_value || 0);
+        const comm = Number(m.paid_commission || val * DEFAULT_RATES.associate_pct / 100);
+        const kab = Number(m.kabidul_commission || val * DEFAULT_RATES.kabidul_pct / 100);
+        return (
+          <div className="text-xs space-y-0.5">
+            <div className="font-medium text-emerald-400 flex items-center gap-1"><Sparkles className="w-3 h-3" />5%: ${comm.toFixed(2)}</div>
+            <div className="font-semibold text-amber-400 flex items-center gap-1"><Briefcase className="w-3 h-3" />25%: ${kab.toFixed(2)}</div>
+          </div>
+        );
+      },
+    },
+    { key: 'tg_handle', header: 'Telegram Handle', csv: (m) => m.telegram_handle || '' },
+    { key: 'tg_id', header: 'Telegram User ID', csv: (m) => m.telegram_user_id || '' },
+    {
+      key: 'actions', header: 'Actions', align: 'right',
+      render: (m) => (
+        <div className="flex items-center justify-end gap-1.5">
+          <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(m); }} className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 rounded-lg text-xs font-medium transition-colors" title="Edit VIP Member Details">
+            <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setRenewingMember(m);
+              setRenewTierValue(m.paid_subscription_value || '350');
+              setRenewDurationMonths(m.subscription_duration_months || '8');
+              setIsRenewModalOpen(true);
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-lg text-xs font-medium transition-colors"
+            title="Renew Subscription"
+          >
+            <RotateCw className="w-3.5 h-3.5" /> Renew
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); handleDeleteMember(m.id, m.first_name); }} className="p-1.5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-lg transition-colors" title="Delete Member">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      ),
+    },
+  ], []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const exportToCSV = () => {
     if (filteredVips.length === 0) return alert('No VIP data to export.');
-    const headers = ["Member Name", "Telegram Handle", "User ID", "Attributed Associate", "Subscription Tier ($)", "Duration (Months)", "Expiration Date", "Status", "5% Associate Commission ($)", "25% Kabidul Commission ($)", "Date Enrolled"];
-    const rows = filteredVips.map(m => [
-      `"${m.first_name || 'Member'}"`,
-      `"${m.telegram_handle || '-'}"`,
-      `"${m.telegram_user_id || '-'}"`,
-      `"${m.associate_name || 'Direct'}"`,
-      m.paid_subscription_value || 0,
-      m.subscription_duration_months || 6,
-      `"${m.subscription_expiration_date ? new Date(m.subscription_expiration_date).toLocaleDateString() : '-'}"`,
-      m.subscription_status || 'ACTIVE',
-      m.paid_commission || 0,
-      m.kabidul_commission || ((m.paid_subscription_value || 0) * 0.25),
-      `"${new Date(m.paid_group_joined_at || m.created_at).toLocaleDateString()}"`
-    ]);
-
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `VIP_Members_Roster_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportCsv(filteredVips, columns, 'VIP_Members_Roster');
   };
 
   return (
@@ -522,275 +651,42 @@ export default function VipMembersDeskView() {
       </div>
 
       {/* Filter Controls Bar */}
-      <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl shadow-lg space-y-3 md:space-y-0 md:flex md:items-center md:justify-between gap-4 backdrop-blur-md">
-        {/* Search Box */}
-        <div className="relative flex-1 min-w-[240px]">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search member name, @handle, ID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-950/80 border border-slate-800 focus:border-amber-500/50 text-slate-200 text-sm pl-10 pr-4 py-2 rounded-xl focus:outline-none transition-all placeholder:text-slate-500"
-          />
-          {searchTerm && (
-            <button onClick={() => setSearchTerm("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-
-        {/* Dropdown Filters */}
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-medium px-3 py-2 rounded-xl focus:outline-none focus:border-amber-500/50"
-          >
-            <option value="ALL">All Statuses</option>
-            <option value="ACTIVE">🟢 Active</option>
-            <option value="EXPIRING_SOON">⚠️ Expiring Soon</option>
-            <option value="EXPIRED">🔴 Expired</option>
-          </select>
-
-          <select
-            value={selectedAssociate}
-            onChange={(e) => setSelectedAssociate(e.target.value)}
-            className="bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-medium px-3 py-2 rounded-xl focus:outline-none focus:border-amber-500/50"
-          >
-            <option value="ALL">All Associates</option>
-            {associates.map(a => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-            <option value="DIRECT">Unattributed / Direct</option>
-          </select>
-
-          <select
-            value={selectedPackage}
-            onChange={(e) => setSelectedPackage(e.target.value)}
-            className="bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-medium px-3 py-2 rounded-xl focus:outline-none focus:border-amber-500/50"
-          >
-            <option value="ALL">All Tier Packages</option>
-            <option value="250">$250 (Quarterly)</option>
-            <option value="350">$350 (Half-Yearly)</option>
-            <option value="700">$700 (Yearly)</option>
-            <option value="CUSTOM">Custom Tier</option>
-          </select>
-
-          <select
-            value={sortOrder}
-            onChange={(e) => setSortOrder(e.target.value)}
-            className="bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-medium px-3 py-2 rounded-xl focus:outline-none focus:border-amber-500/50"
-          >
-            <option value="LATEST">📅 Latest Joined</option>
-            <option value="OLDEST">📅 Oldest Joined</option>
-            <option value="PKG_DESC">💰 Highest to Lowest Package</option>
-            <option value="PKG_ASC">💰 Lowest to Highest Package</option>
-          </select>
-        </div>
-      </div>
+      <FilterBar
+        config={tableConfig}
+        controls={controls}
+        associates={associates}
+        facets={controls.facetCounts(vipMembers)}
+        matched={filteredVips.length}
+        total={vipMembers.length}
+      />
 
       {/* Main VIP Roster Table */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl shadow-xl overflow-hidden backdrop-blur-md">
-        {loading ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  <th scope="col" className="py-3.5 px-4">Member Info</th>
-                  <th scope="col" className="py-3.5 px-4">Referred Associate</th>
-                  <th scope="col" className="py-3.5 px-4">Package & Duration</th>
-                  <th scope="col" className="py-3.5 px-4">Joined & Expiration Date</th>
-                  <th scope="col" className="py-3.5 px-4">Status</th>
-                  <th scope="col" className="py-3.5 px-4">Commissions (5% / 25%)</th>
-                  <th scope="col" className="py-3.5 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 text-sm">
-                <SkeletonTableRows columns={7} rows={8} />
-              </tbody>
-            </table>
-          </div>
-        ) : filteredVips.length === 0 ? (
+      <DataTable
+        rows={filteredVips}
+        columns={columns}
+        sort={controls.sort}
+        onToggleSort={controls.toggleSort}
+        loading={loading}
+        estimateRowHeight={72}
+        rowKey={(m) => m.id}
+        onRowClick={(m) => openMember(m.id, { onAfterChange: fetchVipData })}
+        emptyState={(
           <div className="p-16 text-center text-slate-400 space-y-3">
             <Crown className="w-10 h-10 text-slate-600 mx-auto stroke-[1.5]" />
             <div className="text-base font-medium text-slate-300">No VIP Members Found</div>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              {searchTerm || selectedAssociate !== "ALL" || selectedPackage !== "ALL" || selectedStatus !== "ALL"
-                ? "Try adjusting your search terms or dropdown filters."
-                : "Enroll your first VIP member using the button above!"}
+              {controls.activeCount > 0
+                ? 'Try adjusting your search terms or filters.'
+                : 'Enroll your first VIP member using the button above!'}
             </p>
           </div>
-        ) : (
-          <div ref={tableScrollRef} className="overflow-auto max-h-[70vh]">
-            <table className="w-full text-left border-collapse">
-              <thead className="sticky top-0 z-10 bg-slate-950">
-                <tr className="border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  <th scope="col" className="py-3.5 px-4">Member Info</th>
-                  <th scope="col" className="py-3.5 px-4">Referred Associate</th>
-                  <th scope="col" className="py-3.5 px-4">Package & Duration</th>
-                  <th scope="col" className="py-3.5 px-4">Joined & Expiration Date</th>
-                  <th scope="col" className="py-3.5 px-4">Status</th>
-                  <th scope="col" className="py-3.5 px-4">Commissions (5% / 25%)</th>
-                  <th scope="col" className="py-3.5 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 text-sm">
-                {virtualPaddingTop > 0 && (
-                  <tr aria-hidden="true" style={{ height: `${virtualPaddingTop}px` }}>
-                    <td colSpan={7} style={{ padding: 0, border: 'none' }} />
-                  </tr>
-                )}
-                {virtualRows.map((virtualRow) => {
-                  const m = filteredVips[virtualRow.index];
-                  const val = Number(m.paid_subscription_value || 0);
-                  const comm = Number(m.paid_commission || (val * 0.05));
-                  const kabComm = Number(m.kabidul_commission || (val * 0.25));
-                  const durMonths = m.subscription_duration_months || 6;
-                  const isPromo = durMonths === 8 || durMonths === 14;
-
-                  const status = m.subscription_status || 'ACTIVE';
-                  const expDate = m.subscription_expiration_date ? new Date(m.subscription_expiration_date) : null;
-
-                  return (
-                    <tr
-                      key={m.id}
-                      data-index={virtualRow.index}
-                      ref={rowVirtualizer.measureElement}
-                      className="hover:bg-slate-800/30 transition-colors group"
-                    >
-                      {/* Member Info */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500/20 to-yellow-500/10 border border-amber-500/30 flex items-center justify-center font-bold text-amber-400 text-sm">
-                            {m.first_name ? m.first_name.charAt(0).toUpperCase() : 'V'}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-slate-200 flex items-center gap-2">
-                              <span>{m.first_name || 'VIP Member'}</span>
-                            </div>
-                            <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                              {m.telegram_handle && <span className="text-amber-400/80">{m.telegram_handle}</span>}
-                              {m.telegram_user_id && <span className="text-slate-600 font-mono text-[10px]">ID: {m.telegram_user_id}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Attributed Associate */}
-                      <td className="py-3.5 px-4">
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/60 border border-slate-700/50 text-xs font-medium text-slate-300">
-                          <Users className="w-3.5 h-3.5 text-amber-400" />
-                          <span>{m.associate_name || 'Unattributed / Direct'}</span>
-                        </div>
-                      </td>
-
-                      {/* Package & Duration */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-emerald-400 flex items-center gap-1">
-                          <DollarSign className="w-4 h-4 stroke-[2.5]" />
-                          <span>{val}</span>
-                          <span className="text-xs font-normal text-slate-400 ml-1">
-                            ({durMonths} Months {isPromo ? '🎁 Promo' : ''})
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Dates */}
-                      <td className="py-3.5 px-4">
-                        <div className="text-xs space-y-0.5">
-                          <div className="text-slate-300 flex items-center gap-1">
-                            <Calendar className="w-3 h-3 text-slate-500" />
-                            <span>Joined: {new Date(m.paid_group_joined_at || m.created_at).toLocaleDateString()}</span>
-                          </div>
-                          <div className="text-slate-400 font-medium flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-amber-400" />
-                            <span>Expires: {expDate ? expDate.toLocaleDateString() : 'N/A'}</span>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-3.5 px-4">
-                        {status === 'EXPIRING_SOON' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-semibold">
-                            <AlertTriangle className="w-3.5 h-3.5" /> Expiring Soon
-                          </span>
-                        ) : status === 'EXPIRED' ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-semibold">
-                            <Clock className="w-3.5 h-3.5" /> Expired
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Active
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Commissions */}
-                      <td className="py-3.5 px-4">
-                        <div className="text-xs space-y-0.5">
-                          <div className="font-medium text-emerald-400 flex items-center gap-1">
-                            <Sparkles className="w-3 h-3" />
-                            <span>5% Associate: ${comm.toFixed(2)}</span>
-                          </div>
-                          <div className="font-semibold text-amber-400 flex items-center gap-1">
-                            <Briefcase className="w-3 h-3" />
-                            <span>25% Kabidul: ${kabComm.toFixed(2)}</span>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Actions */}
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => handleOpenEditModal(m)}
-                            className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 rounded-lg text-xs font-medium transition-colors"
-                            title="Edit VIP Member Details"
-                          >
-                            <Edit3 className="w-3.5 h-3.5 text-amber-400" /> Edit
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setRenewingMember(m);
-                              setRenewTierValue(m.paid_subscription_value || "350");
-                              setRenewDurationMonths(m.subscription_duration_months || "8");
-                              setIsRenewModalOpen(true);
-                            }}
-                            className="flex items-center gap-1 px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-lg text-xs font-medium transition-colors"
-                            title="Renew Subscription"
-                          >
-                            <RotateCw className="w-3.5 h-3.5" /> Renew
-                          </button>
-
-                          <button
-                            onClick={() => handleDeleteMember(m.id, m.first_name)}
-                            className="p-1.5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-lg transition-colors"
-                            title="Delete Member"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {virtualPaddingBottom > 0 && (
-                  <tr aria-hidden="true" style={{ height: `${virtualPaddingBottom}px` }}>
-                    <td colSpan={7} style={{ padding: 0, border: 'none' }} />
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
         )}
-      </div>
+      />
 
       {!loading && filteredVips.length > 0 && (
         <p className="text-center text-[11px] text-slate-500 font-mono py-2">
-          Showing all {filteredVips.length} VIP members — scroll to load more rows
+          Showing {filteredVips.length} of {vipMembers.length} VIP members
+          {controls.activeCount > 0 ? ' (filtered)' : ''} — scroll for more
         </p>
       )}
 
@@ -1174,7 +1070,10 @@ export default function VipMembersDeskView() {
               </div>
 
               <p className="text-[11px] text-slate-500">
-                This will reset the member's status to 🟢 ACTIVE, calculate Kabidul's 25% commission ($${(Number(renewTierValue) * 0.25).toFixed(2)}), and calculate a new expiration date starting from today.
+                This will reset the member's status to 🟢 ACTIVE, record a renewal payment, calculate Kabidul's{' '}
+                {calcCommissions(Number(renewTierValue) || 0, ratesFor(renewingMember?.associate_id)).snapshot.kabidul_pct}% commission
+                {' '}(${calcCommissions(Number(renewTierValue) || 0, ratesFor(renewingMember?.associate_id)).kabidul_commission.toFixed(2)}),
+                and set a new expiration date starting from today.
               </p>
 
               <div className="flex items-center justify-end gap-3 pt-2">

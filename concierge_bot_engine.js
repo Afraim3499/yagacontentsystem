@@ -8,7 +8,13 @@ require('dotenv').config();
 const http = require('http');
 const { Client } = require('pg');
 
-const BOT_TOKEN = process.env.TELEGRAM_CONCIERGE_BOT_TOKEN || '8821931231:AAF43WpD1m-7RqJLKwnwltuiWwCTBTiQ6gM';
+// Client-relation bot token — env only, never hardcoded. Rotate it in
+// .env (and on the VPS via update_vps_env.js), not in this file.
+const BOT_TOKEN = process.env.TELEGRAM_CONCIERGE_BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error('❌ FATAL: TELEGRAM_CONCIERGE_BOT_TOKEN is not set in the environment.');
+  process.exit(1);
+}
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const DB_CONNECTION = process.env.DATABASE_URL || 'postgresql://postgres.ghwvwtwktnveqdqivxmy:Rizwan99636%3F@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
 const PORT = process.env.CONCIERGE_BOT_PORT || 3006;

@@ -4,12 +4,15 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import CrmLockScreen from './components/CrmLockScreen';
 import { ConfirmDialogProvider } from './components/ConfirmDialogProvider';
+import { Member360Provider } from './components/member360/Member360Context';
+const Member360Panel = lazy(() => import('./components/member360/Member360Panel'));
 
 // Each desk view is only fetched when its tab is actually opened, instead
 // of all 16 views (plus their charting/table dependencies) being bundled
 // into a single ~1MB JS payload that loads in full before the login screen
 // even renders.
 const DashboardView = lazy(() => import('./components/views/DashboardView'));
+const OwnerFinanceView = lazy(() => import('./components/views/OwnerFinanceView'));
 const ContentStudioView = lazy(() => import('./components/views/ContentStudioView'));
 const CreatorsAccountsView = lazy(() => import('./components/views/CreatorsAccountsView'));
 const PlatformsPlaybooksView = lazy(() => import('./components/views/PlatformsPlaybooksView'));
@@ -343,6 +346,7 @@ export default function App() {
 
   return (
     <ConfirmDialogProvider>
+    <Member360Provider>
     <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Top Fixed Navbar */}
       <Navbar
@@ -376,17 +380,13 @@ export default function App() {
         <main className="flex-1 min-w-0 overflow-y-auto">
         <Suspense fallback={<ViewLoadingFallback />}>
           {activeTab === 'dashboard' && (
-            <DashboardView 
-              systemSettings={systemSettings}
-              creators={creators}
-              platforms={platforms}
-              accounts={accounts}
-              dailyBatch={dailyBatch}
+            <DashboardView
               issues={issues}
-              onPhaseToggle={handlePhaseToggle}
               onNavigateTab={setActiveTab}
             />
           )}
+
+          {activeTab === 'finance' && <OwnerFinanceView />}
 
           {activeTab === 'studio' && (
             <ContentStudioView 
@@ -473,7 +473,12 @@ export default function App() {
         </Suspense>
         </main>
       </div>
+
+      <Suspense fallback={null}>
+        <Member360Panel />
+      </Suspense>
     </div>
+    </Member360Provider>
     </ConfirmDialogProvider>
   );
 }

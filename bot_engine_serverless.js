@@ -5,6 +5,8 @@
 
 try { require('dotenv').config(); } catch(e) {}
 const { Pool } = require('pg');
+const { logMemberEvent, recordMemberPayment } = require('./shared/memberLog.cjs');
+const { calcCommissions, resolveRatesFromDb } = require('./shared/commissions.cjs');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
@@ -952,12 +954,19 @@ async function handleUpdate(update) {
 
       // Log or update pending VIP join request in CRM database
       const logId = `MEM-${Date.now().toString().substring(5)}`;
-      await runQuery(
+      const reqRes = await runQuery(
         `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'PAID_VIP_PENDING', 'PENDING_APPROVAL')
-         ON CONFLICT (telegram_user_id) DO UPDATE SET first_name = EXCLUDED.first_name, telegram_handle = EXCLUDED.telegram_handle, group_id = EXCLUDED.group_id, group_name = EXCLUDED.group_name, member_tier = 'PAID_VIP_PENDING', status = 'PENDING_APPROVAL'`,
+         ON CONFLICT (telegram_user_id) DO UPDATE SET first_name = EXCLUDED.first_name, telegram_handle = EXCLUDED.telegram_handle, group_id = EXCLUDED.group_id, group_name = EXCLUDED.group_name, member_tier = 'PAID_VIP_PENDING', status = 'PENDING_APPROVAL'
+         RETURNING id`,
         [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle]
       );
+      await logMemberEvent(runQuery, {
+        memberId: reqRes.rows[0]?.id || logId, telegramUserId: user.id.toString(), memberName: user.first_name || 'Member',
+        type: 'status_changed', actor: 'bot', source: 'BOT_JOIN_REQUEST',
+        note: `Requested High Table — awaiting owner approval (assoc: ${associateName})`,
+        detail: { after: { member_tier: 'PAID_VIP_PENDING', group: groupTitle } },
+      });
 
       // Package Tier Selection Keyboard for Owner
       const packageKeyboard = {
@@ -990,12 +999,19 @@ async function handleUpdate(update) {
       const { associateId, associateName, freeComm } = await resolveAssociateFromLink(req.invite_link || inviteLink);
 
       const logId = `MEM-${Date.now().toString().substring(5)}`;
-      await runQuery(
+      const freeRes = await runQuery(
         `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status, free_commission)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'FREE_ONLY', 'ACTIVE', $10)
-         ON CONFLICT (telegram_user_id) DO UPDATE SET associate_id = EXCLUDED.associate_id, associate_name = EXCLUDED.associate_name, used_invite_link = EXCLUDED.used_invite_link, status = 'ACTIVE'`,
+         ON CONFLICT (telegram_user_id) DO UPDATE SET associate_id = EXCLUDED.associate_id, associate_name = EXCLUDED.associate_name, used_invite_link = EXCLUDED.used_invite_link, status = 'ACTIVE'
+         RETURNING id, (xmax = 0) AS was_insert`,
         [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, freeComm]
       );
+      await logMemberEvent(runQuery, {
+        memberId: freeRes.rows[0]?.id || logId, telegramUserId: user.id.toString(), memberName: user.first_name || 'Member',
+        type: freeRes.rows[0]?.was_insert ? 'joined_free' : 'rejoined', actor: 'bot', source: 'BOT_JOIN_REQUEST',
+        note: `Joined free group ${groupTitle} via ${associateName}`,
+        detail: { meta: { associate: associateName, invite_link: inviteLink || null, free_commission: freeComm } },
+      });
 
       console.log(`🎉 FREE GROUP JOIN REQUEST APPROVED: ${user.first_name} -> ${associateName}`);
       return;
@@ -1035,15 +1051,18 @@ async function handleUpdate(update) {
             associateName = (associateName !== 'Unattributed / Direct') ? associateName : (ex.associate_name || 'Direct VIP');
           }
 
+          let vipJoinId = null;
           if (existingRes.rows.length > 0) {
-            await runQuery(
-              `UPDATE public.community_members_log 
-               SET member_tier = 'PAID_VIP', 
-                   paid_group_joined_at = NOW(), 
-                   status = 'ACTIVE' 
-               WHERE telegram_user_id = $1`,
+            const upd = await runQuery(
+              `UPDATE public.community_members_log
+               SET member_tier = 'PAID_VIP',
+                   paid_group_joined_at = NOW(),
+                   status = 'ACTIVE'
+               WHERE telegram_user_id = $1
+               RETURNING id`,
               [user.id.toString()]
             );
+            vipJoinId = upd.rows[0]?.id || null;
           } else {
             const logId = `MEM-${Date.now().toString().substring(5)}`;
             await runQuery(
@@ -1051,9 +1070,18 @@ async function handleUpdate(update) {
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'PAID_VIP', 'ACTIVE', 0.00, 0.00)`,
               [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, groupId, groupTitle]
             );
+            vipJoinId = logId;
           }
 
           console.log(`💎 PAID VIP JOIN LOGGED: ${user.first_name} (${user.id}) attributed to ${associateName}`);
+          if (vipJoinId) {
+            await logMemberEvent(runQuery, {
+              memberId: vipJoinId, telegramUserId: user.id.toString(), memberName: user.first_name || 'Member',
+              type: 'status_changed', actor: 'bot', source: 'BOT_CHAT_MEMBER',
+              note: `Joined ${groupTitle} — awaiting package confirmation (assoc: ${associateName})`,
+              detail: { after: { member_tier: 'PAID_VIP', group: groupTitle } },
+            });
+          }
 
           const packageKeyboard = {
             inline_keyboard: [
@@ -1087,6 +1115,12 @@ async function handleUpdate(update) {
               [logId, user.id.toString(), handle, firstName, associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, freeComm]
             );
             console.log(`🎉 FREE MEMBER JOIN LOGGED: ${firstName} (${user.id}) via ${associateName} (+$${freeComm.toFixed(2)})`);
+            await logMemberEvent(runQuery, {
+              memberId: logId, telegramUserId: user.id.toString(), memberName: firstName,
+              type: 'joined_free', actor: 'bot', source: 'BOT_CHAT_MEMBER',
+              note: `Joined free group ${groupTitle} via ${associateName}`,
+              detail: { meta: { associate: associateName, invite_link: inviteLink || null, free_commission: freeComm } },
+            });
 
             if (associateId) {
               const ascInfo = await runQuery(`SELECT telegram_chat_id FROM public.associates WHERE id = $1`, [associateId]);
@@ -1108,11 +1142,23 @@ async function handleUpdate(update) {
     // MEMBER LEAVE EVENT
     else if ((oldStatus === 'member' || oldStatus === 'administrator') && (newStatus === 'left' || newStatus === 'kicked')) {
       try {
-        await runQuery(
-          `UPDATE public.community_members_log SET status = 'LEFT' WHERE telegram_user_id = $1 AND group_id = $2`,
+        const leftRes = await runQuery(
+          `UPDATE public.community_members_log
+           SET status = 'LEFT', left_at = NOW()
+           WHERE telegram_user_id = $1 AND group_id = $2
+           RETURNING id, first_name, member_tier`,
           [user.id.toString(), groupId]
         );
         console.log(`🔴 MEMBER LEFT: ${user.id} left ${groupTitle}`);
+        const left = leftRes.rows[0];
+        if (left) {
+          await logMemberEvent(runQuery, {
+            memberId: left.id, telegramUserId: user.id.toString(), memberName: left.first_name,
+            type: 'left', actor: 'bot', source: 'BOT_CHAT_MEMBER',
+            note: `Left ${groupTitle} (${newStatus})`,
+            detail: { meta: { group: groupTitle, tier: left.member_tier, transition: newStatus } },
+          });
+        }
       } catch (leaveErr) {
         console.error('Error logging member leave:', leaveErr);
       }
@@ -1597,8 +1643,25 @@ async function finalizeSignalResult(chatId, sigId, type, pnlVal) {
 }
 
 async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, months, customStartDate = null) {
-  const commVal = Number((subVal * 0.05).toFixed(2));
-  const kabidulCommVal = Number((subVal * 0.25).toFixed(2));
+  // Pull the member's current state up front (REQ path) so we can resolve
+  // commission rates and tell a first enrollment from a renewal.
+  let existing = null;
+  if (flowType === 'REQ') {
+    try {
+      const pre = await runQuery(
+        `SELECT id, associate_id, first_converted_at, subscription_expiration_date,
+                renewal_count, lifetime_value
+         FROM public.community_members_log WHERE telegram_user_id = $1`,
+        [targetUserId]
+      );
+      existing = pre.rows[0] || null;
+    } catch (e) { /* fall back to default rates */ }
+  }
+  const preAssociateId = flowType === 'REQ' ? (existing?.associate_id || null) : (activeSessions[chatId]?.ascId || null);
+  const rates = await resolveRatesFromDb(runQuery, preAssociateId);
+  const { associate_commission: commVal, kabidul_commission: kabidulCommVal, snapshot: commSnapshot } =
+    calcCommissions(subVal, rates);
+  const isRenewal = flowType === 'REQ' && existing && existing.first_converted_at != null;
   const now = customStartDate ? new Date(customStartDate) : new Date();
   const expDate = new Date(now);
   expDate.setMonth(expDate.getMonth() + Number(months));
@@ -1619,25 +1682,33 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
   let memberName = 'VIP Member';
   let associateId = null;
   let associateName = 'Unattributed / Direct';
+  let memberId = null;
+  const priorExpiry = existing?.subscription_expiration_date || null;
+  const paymentType = isRenewal ? 'renewal' : 'new';
 
   if (flowType === 'REQ') {
     const memRes = await runQuery(
-      `UPDATE public.community_members_log 
-       SET paid_subscription_value = $1, 
-           paid_commission = $2, 
+      `UPDATE public.community_members_log
+       SET paid_subscription_value = $1,
+           paid_commission = $2,
            kabidul_commission = $3,
            member_tier = 'PAID_VIP',
            status = 'ACTIVE',
            subscription_duration_months = $4,
            subscription_expiration_date = $5,
            subscription_status = $6,
-           paid_group_joined_at = $7
+           paid_group_joined_at = $7,
+           first_converted_at = COALESCE(first_converted_at, $7),
+           last_renewed_at = CASE WHEN $9 THEN $7 ELSE last_renewed_at END,
+           renewal_count = renewal_count + CASE WHEN $9 THEN 1 ELSE 0 END,
+           lifetime_value = COALESCE(lifetime_value, 0) + $1
        WHERE telegram_user_id = $8
-       RETURNING first_name, telegram_handle, associate_id, associate_name`,
-      [subVal, commVal, kabidulCommVal, months, expDate.toISOString(), subStatus, now.toISOString(), targetUserId]
+       RETURNING id, first_name, telegram_handle, associate_id, associate_name`,
+      [subVal, commVal, kabidulCommVal, months, expDate.toISOString(), subStatus, now.toISOString(), targetUserId, isRenewal]
     );
 
     const mem = memRes.rows[0];
+    memberId = mem?.id || null;
     const nameStr = mem?.first_name && mem.first_name !== 'VIP Member' && mem.first_name !== 'Member' ? mem.first_name : '';
     const handleStr = mem?.telegram_handle ? mem.telegram_handle : '';
     if (nameStr && handleStr && !nameStr.includes(handleStr)) {
@@ -1661,12 +1732,46 @@ async function finalizeVipEnrollment(chatId, flowType, targetUserId, subVal, mon
     const userId = targetUserId && targetUserId !== '0' ? targetUserId : `USR-${Date.now().toString().substring(6)}`;
     const logId = `MEM-${Date.now().toString().substring(5)}`;
     const handle = memberName.startsWith('@') ? memberName : '';
+    memberId = logId;
 
     await runQuery(
-      `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, kabidul_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id, subscription_duration_months, subscription_expiration_date, subscription_status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, $9, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $10, $11, 'High Table (Paid VIP)', '-1002607815374', $12, $13, $14)`,
+      `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, member_tier, paid_subscription_value, paid_commission, kabidul_commission, status, enrollment_source, enrolled_by_owner_id, paid_group_joined_at, group_name, group_id, subscription_duration_months, subscription_expiration_date, subscription_status, first_converted_at, lifetime_value, renewal_count)
+       VALUES ($1, $2, $3, $4, $5, $6, 'PAID_VIP', $7, $8, $9, 'ACTIVE', 'OWNER_MANUAL_ENROLL', $10, $11, 'High Table (Paid VIP)', '-1002607815374', $12, $13, $14, $11, $7, 0)`,
       [logId, userId, handle, memberName, associateId, associateName, subVal, commVal, kabidulCommVal, chatId.toString(), now.toISOString(), months, expDate.toISOString(), subStatus]
     );
+  }
+
+  // Append the payment + lifecycle event to the intelligence tables (non-blocking).
+  if (memberId) {
+    const paymentId = await recordMemberPayment(runQuery, {
+      memberId,
+      telegramUserId: String(targetUserId || ''),
+      memberName,
+      paymentType,
+      amount: subVal,
+      durationMonths: Number(months),
+      termStart: now.toISOString(),
+      termEnd: expDate.toISOString(),
+      previousTermEnd: priorExpiry,
+      associateId,
+      associateName,
+      associateCommission: commVal,
+      kabidulCommission: kabidulCommVal,
+      commissionSnapshot: commSnapshot,
+      recordedBy: `owner:${chatId}`,
+      source: flowType === 'REQ' ? 'BOT_CALLBACK' : 'BOT_MANUAL_ENROLL',
+    });
+    await logMemberEvent(runQuery, {
+      memberId,
+      telegramUserId: String(targetUserId || ''),
+      memberName,
+      type: isRenewal ? 'renewed' : 'enrolled',
+      actor: `owner:${chatId}`,
+      source: flowType === 'REQ' ? 'BOT_CALLBACK' : 'BOT_MANUAL_ENROLL',
+      paymentId,
+      note: `${isRenewal ? 'Renewed' : 'Enrolled'} via Telegram at $${subVal} for ${months} months`,
+      detail: { after: { paid_subscription_value: subVal, months, subscription_expiration_date: expDate.toISOString(), associate: associateName } },
+    });
   }
 
   delete activeSessions[chatId];
