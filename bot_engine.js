@@ -109,11 +109,21 @@ async function pollUpdates() {
 
   while (true) {
     try {
-      const res = await fetch(`${API_BASE}/getUpdates?offset=${offset}&timeout=30&allowed_updates=${encodeURIComponent(allowedUpdates)}`).then(r => r.json());
+      const res = await fetch(`${API_BASE}/getUpdates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          offset: offset,
+          timeout: 25,
+          allowed_updates: ["message", "callback_query", "chat_member", "my_chat_member", "chat_join_request"]
+        }),
+        signal: AbortSignal.timeout(35000)
+      }).then(r => r.json());
+
       if (res.ok && res.result && res.result.length > 0) {
         for (const update of res.result) {
           offset = update.update_id + 1;
-          console.log(`📩 Incoming Update [${update.update_id}]:`, update.message?.text || update.callback_query?.data || update.chat_member ? `Joinee ${update.chat_member?.new_chat_member?.user?.first_name}` : 'Event');
+          console.log(`📩 Incoming Update [${update.update_id}]:`, update.message?.text || update.callback_query?.data || (update.chat_member ? `Joinee ${update.chat_member?.new_chat_member?.user?.first_name}` : 'Event'));
           try {
             await handleUpdate(update);
           } catch (handlerErr) {
@@ -122,7 +132,7 @@ async function pollUpdates() {
         }
       }
     } catch (err) {
-      console.error('Polling error:', err.message);
+      console.error('Polling connection retry:', err.message);
       await new Promise(r => setTimeout(r, 3000));
     }
   }
