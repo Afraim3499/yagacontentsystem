@@ -7,6 +7,7 @@ try { require('dotenv').config(); } catch(e) {}
 const { Pool } = require('pg');
 const { logMemberEvent, recordMemberPayment } = require('./shared/memberLog.cjs');
 const { calcCommissions, resolveRatesFromDb } = require('./shared/commissions.cjs');
+const { parseSignalForChart, renderSignalChartBuffer, sendPhotoBuffer } = require('./chart_card_generator');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
@@ -673,6 +674,15 @@ async function handleUpdate(update) {
         const parsed = parseSignalData(rawText);
         const formattedText = buildFormattedSignalText(parsed.symbol, parsed.entry, parsed.tp, parsed.sl, parsed.leverage, parsed.notes);
 
+        let chartBuffer = null;
+        if (!photoFileId) {
+          const chartParams = parseSignalForChart(parsed);
+          if (chartParams) {
+            await apiCall('sendMessage', { chat_id: chatId, text: `⚙️ *Generating HQ Trading Signal Chart Card...*`, parse_mode: 'Markdown' });
+            chartBuffer = await renderSignalChartBuffer(chartParams);
+          }
+        }
+
         activeSessions[chatId] = {
           type: 'SIGNAL_PREVIEW_CONFIRM',
           symbol: parsed.symbol,
@@ -682,6 +692,7 @@ async function handleUpdate(update) {
           leverage: parsed.leverage,
           notes: parsed.notes,
           photoFileId,
+          chartBuffer,
           formattedText,
           creatorId: session.creatorId,
           creatorName: session.creatorName,
@@ -704,6 +715,8 @@ async function handleUpdate(update) {
             parse_mode: 'Markdown',
             reply_markup: previewKeyboard
           });
+        } else if (chartBuffer) {
+          await sendPhotoBuffer(chatId, chartBuffer, `📋 *LIVE PREVIEW OF TRADE SIGNAL MESSAGE (WITH HQ CHART):*\n\n${formattedText}\n\n👇 *Select target group to broadcast:*`, { reply_markup: previewKeyboard });
         } else {
           await apiCall('sendMessage', {
             chat_id: chatId,
@@ -1051,27 +1064,20 @@ async function handleUpdate(update) {
             associateName = (associateName !== 'Unattributed / Direct') ? associateName : (ex.associate_name || 'Direct VIP');
           }
 
-          let vipJoinId = null;
-          if (existingRes.rows.length > 0) {
-            const upd = await runQuery(
-              `UPDATE public.community_members_log
-               SET member_tier = 'PAID_VIP',
-                   paid_group_joined_at = NOW(),
-                   status = 'ACTIVE'
-               WHERE telegram_user_id = $1
-               RETURNING id`,
-              [user.id.toString()]
-            );
-            vipJoinId = upd.rows[0]?.id || null;
-          } else {
-            const logId = `MEM-${Date.now().toString().substring(5)}`;
-            await runQuery(
-              `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, group_id, group_name, paid_group_joined_at, member_tier, status, paid_subscription_value, paid_commission)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'PAID_VIP', 'ACTIVE', 0.00, 0.00)`,
-              [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, groupId, groupTitle]
-            );
-            vipJoinId = logId;
-          }
+          const logId = `MEM-${Date.now().toString().substring(5)}`;
+          const vipRes = await runQuery(
+            `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, group_id, group_name, paid_group_joined_at, member_tier, status, paid_subscription_value, paid_commission)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'PAID_VIP', 'ACTIVE', 0.00, 0.00)
+             ON CONFLICT (telegram_user_id) DO UPDATE SET
+               associate_id = COALESCE(public.community_members_log.associate_id, EXCLUDED.associate_id),
+               associate_name = CASE WHEN public.community_members_log.associate_name IS NOT NULL AND public.community_members_log.associate_name != 'Unattributed / Direct' THEN public.community_members_log.associate_name ELSE EXCLUDED.associate_name END,
+               member_tier = 'PAID_VIP',
+               paid_group_joined_at = NOW(),
+               status = 'ACTIVE'
+             RETURNING id`,
+            [logId, user.id.toString(), user.username ? `@${user.username}` : '', user.first_name || 'Member', associateId, associateName, groupId, groupTitle]
+          );
+          let vipJoinId = vipRes.rows[0]?.id || logId;
 
           console.log(`💎 PAID VIP JOIN LOGGED: ${user.first_name} (${user.id}) attributed to ${associateName}`);
           if (vipJoinId) {
@@ -1111,7 +1117,8 @@ async function handleUpdate(update) {
 
             await runQuery(
               `INSERT INTO public.community_members_log (id, telegram_user_id, telegram_handle, first_name, associate_id, associate_name, used_invite_link, group_id, group_name, free_group_joined_at, member_tier, status, free_commission)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'FREE_ONLY', 'ACTIVE', $10)`,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'FREE_ONLY', 'ACTIVE', $10)
+               ON CONFLICT (telegram_user_id) DO UPDATE SET status = 'ACTIVE'`,
               [logId, user.id.toString(), handle, firstName, associateId, associateName, inviteLink || 'Direct/Unknown', groupId, groupTitle, freeComm]
             );
             console.log(`🎉 FREE MEMBER JOIN LOGGED: ${firstName} (${user.id}) via ${associateName} (+$${freeComm.toFixed(2)})`);
@@ -1465,6 +1472,9 @@ async function handleUpdate(update) {
             parse_mode: 'Markdown'
           });
           if (resVip.ok && resVip.result) vipMsgId = resVip.result.message_id;
+        } else if (session.chartBuffer) {
+          const resVip = await sendPhotoBuffer('-1002607815374', session.chartBuffer, formattedText);
+          if (resVip.ok && resVip.result) vipMsgId = resVip.result.message_id;
         } else {
           const resVip = await apiCall('sendMessage', {
             chat_id: '-1002607815374',
@@ -1483,6 +1493,9 @@ async function handleUpdate(update) {
               caption: formattedText,
               parse_mode: 'Markdown'
             });
+            if (resFree.ok && resFree.result) freeMsgId = resFree.result.message_id;
+          } else if (session.chartBuffer) {
+            const resFree = await sendPhotoBuffer('-1002628054504', session.chartBuffer, formattedText);
             if (resFree.ok && resFree.result) freeMsgId = resFree.result.message_id;
           } else {
             const resFree = await apiCall('sendMessage', {
