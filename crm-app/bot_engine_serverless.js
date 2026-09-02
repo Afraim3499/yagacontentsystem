@@ -1,7 +1,5 @@
-// ====================================================================
-// YAGA CALLS OPERATIONS SYSTEM — SERVERLESS CORE ENGINE MODULE
-// Dual Compatible: Works with both Vercel Serverless & Local Engine
-// ====================================================================
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 
 try { require('dotenv').config(); } catch(e) {}
 const { Pool } = require('pg');

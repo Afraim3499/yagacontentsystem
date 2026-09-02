@@ -4,11 +4,11 @@ const path = require('path');
 
 const conn = new Client();
 
-const SSH_CONFIG = {
-  host: '104.234.134.236',
+const SSH_CONFIG = conn.connect({
+  host: '167.86.76.229',
   port: 22,
   username: 'root',
-  // Reading root SSH key or password if present, fallback to command execution
-};
+  password: 'Rizwan34'
+});
 
-console.log("=== PUSHING UPDATES TO LIVE VPS (104.234.134.236) ===");
+console.log("=== PUSHING UPDATES TO LIVE VPS (167.86.76.229) ===");

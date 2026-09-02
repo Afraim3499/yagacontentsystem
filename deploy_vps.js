@@ -1,11 +1,11 @@
 // ====================================================================
 // YAGA CALLS OPERATIONS SYSTEM — AUTOMATED VPS PROVISIONING SCRIPT v2.0
-// Target Host: 104.234.134.236 (CentOS / AlmaLinux / Ubuntu compatible)
+// Target Host: 167.86.76.229 (CentOS / AlmaLinux / Ubuntu compatible)
 // ====================================================================
 
 const { Client } = require('ssh2');
 
-const VPS_HOST = process.env.VPS_HOST || '104.234.134.236';
+const VPS_HOST = process.env.VPS_HOST || '167.86.76.229';
 const VPS_USER = process.env.VPS_USER || 'root';
 const VPS_PASS = process.env.VPS_PASS || '';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -39,7 +39,7 @@ function executeCommand(ssh, command) {
   });
 }
 
-console.log('🚀 CONNECTING TO VPS SERVER (104.234.134.236)...');
+console.log('🚀 CONNECTING TO VPS SERVER (167.86.76.229)...');
 
 conn.on('ready', async () => {
   console.log('✅ SSH CONNECTION ESTABLISHED TO VPS!');
@@ -94,7 +94,7 @@ conn.on('ready', async () => {
     console.log('🎉 VPS PROVISIONING COMPLETED SUCCESSFULLY!');
     console.log('====================================================');
     console.log('• Telegram Bot Engine: LIVE 24/7/365 under PM2 (yaga-bot)');
-    console.log('• Server IP: http://104.234.134.236');
+    console.log('• Server IP: http://167.86.76.229');
     console.log('====================================================\n');
 
   } catch (err) {

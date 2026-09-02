@@ -112,13 +112,13 @@ module.exports = {
 const nginxConfig = `
 # ====================================================================
 # MASTER NGINX REVERSE PROXY CONFIGURATION FOR YAGACALLS ECOSYSTEM
-# Domain: yagacalls.com | Server IP: 104.234.134.236
+# Domain: yagacalls.com | Server IP: 167.86.76.229
 # ====================================================================
 
 # 1. Main Next.js Website (yagacalls.com)
 server {
     listen 80;
-    server_name yagacalls.com www.yagacalls.com 104.234.134.236;
+    server_name yagacalls.com www.yagacalls.com 167.86.76.229;
 
     location / {
         proxy_pass http://127.0.0.1:3000;

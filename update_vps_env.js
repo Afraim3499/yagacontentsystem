@@ -66,7 +66,7 @@ conn.on('ready', () => {
 }).on('error', (err) => {
   console.error('❌ SSH Connection Failed:', err.message);
 }).connect({
-  host: process.env.VPS_HOST || '104.234.134.236',
+  host: process.env.VPS_HOST || '167.86.76.229',
   port: 22,
   username: process.env.VPS_USER || 'root',
   password: VPS_SSH_PASSWORD,

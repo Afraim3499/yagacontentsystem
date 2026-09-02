@@ -1,7 +1,5 @@
-// ====================================================================
-// YAGA CALLS OPERATIONS SYSTEM — LOCAL ENGINE RUNNER
-// Uses bot_engine_serverless.js core logic
-// ====================================================================
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 
 const http = require('http');
 const {
