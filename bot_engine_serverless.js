@@ -981,6 +981,15 @@ async function handleUpdate(update) {
         detail: { after: { member_tier: 'PAID_VIP_PENDING', group: groupTitle } },
       });
 
+function escapeMd(str) {
+  if (!str) return '';
+  return String(str).replace(/[_*`\[\]()]/g, (match) => '\\' + match);
+}
+
+      const safeFirstName = escapeMd(user.first_name || 'Member');
+      const safeUsername = user.username ? `@${escapeMd(user.username)}` : `ID: ${user.id}`;
+      const safeAssociateName = escapeMd(associateName || 'Unattributed / Direct');
+
       // Package Tier Selection Keyboard for Owner
       const packageKeyboard = {
         inline_keyboard: [
@@ -997,7 +1006,7 @@ async function handleUpdate(update) {
 
       // Notify Owner(s) via Telegram DM with Referral Info & Package Selector
       await broadcastToOwners((ownerName) => ({
-        text: `👑 *HIGH TABLE JOIN REQUEST RECEIVED!*\n\nHi *${ownerName}*,\nMember *${user.first_name}* (${user.username ? '@' + user.username : 'ID: ' + user.id}) has sent a join request to *High Table*!\n\n📌 *Referred Associate:* *${associateName}*\n\n⚠️ *Note:* The bot will NOT auto-approve this member. Please accept the member in Telegram manually after selecting their subscription package below:\n\n👇 *Select package paid by member:*`,
+        text: `👑 *HIGH TABLE JOIN REQUEST RECEIVED!*\n\nHi *${escapeMd(ownerName)}*,\nMember *${safeFirstName}* (${safeUsername}) has sent a join request to *High Table*!\n\n📌 *Referred Associate:* *${safeAssociateName}*\n\n⚠️ *Note:* The bot will NOT auto-approve this member. Please accept the member in Telegram manually after selecting their subscription package below:\n\n👇 *Select package paid by member:*`,
         reply_markup: packageKeyboard
       }));
 
@@ -1102,8 +1111,12 @@ async function handleUpdate(update) {
             ]
           };
 
+          const safeFirstNameMember = escapeMd(user.first_name || 'Member');
+          const safeUsernameMember = user.username ? `@${escapeMd(user.username)}` : `ID: ${user.id}`;
+          const safeAssociateNameMember = escapeMd(associateName || 'Unattributed / Direct');
+
           await broadcastToOwners((ownerName) => ({
-            text: `💎 *NEW VIP MEMBER JOINED! NEED PACKAGE CONFIRMATION*\n\nHi *${ownerName}*,\nMember *${user.first_name}* (${user.username ? '@' + user.username : 'ID: ' + user.id}) has joined *${groupTitle}*!\n\n📌 *Attributed Associate:* ${associateName}\n\n👇 *Select the package tier paid by this user:*`,
+            text: `💎 *NEW VIP MEMBER JOINED! NEED PACKAGE CONFIRMATION*\n\nHi *${escapeMd(ownerName)}*,\nMember *${safeFirstNameMember}* (${safeUsernameMember}) has joined *${escapeMd(groupTitle)}*!\n\n📌 *Attributed Associate:* *${safeAssociateNameMember}*\n\n👇 *Select the package tier paid by this user:*`,
             reply_markup: packageKeyboard
           }));
         } else {
