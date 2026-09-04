@@ -32,7 +32,7 @@ function parseSignalForChart(parsed) {
     tp3 = Number(tp3.toFixed(precision));
 
     const dir = tp1 >= e ? 'LONG' : 'SHORT';
-    const lev = parsed.leverage || '10x';
+    const lev = parsed.leverage || '1X-3X';
 
     return { symbol, dir, e, sl, tp1, tp2, tp3, lev };
 }
