@@ -34,11 +34,27 @@ async function apiCall(method, payload = {}) {
   }
 }
 
-async function broadcastToOwners(messageText) {
+async function broadcastToOwners(messageText, options = {}) {
   try {
+    const threadId = typeof options === 'object' ? options.threadId : options;
+    const targetThreadId = threadId || process.env.TG_THREAD_SIGNALS || 2;
+    const supergroupId = process.env.TELEGRAM_SUPERGROUP_ID || '-1004498264496';
+
+    if (supergroupId) {
+      const payload = {
+        chat_id: supergroupId,
+        text: messageText,
+        parse_mode: 'HTML'
+      };
+      if (targetThreadId) {
+        payload.message_thread_id = parseInt(targetThreadId, 10);
+      }
+      await apiCall('sendMessage', payload);
+    }
+
     const res = await runQuery(`SELECT telegram_chat_id, name FROM public.owners WHERE telegram_chat_id IS NOT NULL AND active = true`);
     for (const owner of res.rows) {
-      if (owner.telegram_chat_id) {
+      if (owner.telegram_chat_id && owner.telegram_chat_id !== supergroupId) {
         await apiCall('sendMessage', {
           chat_id: owner.telegram_chat_id,
           text: messageText,

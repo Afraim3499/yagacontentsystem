@@ -36,11 +36,28 @@ async function apiCall(method, payload = {}) {
   }
 }
 
-async function broadcastToOwners(msgCallback) {
+async function broadcastToOwners(msgCallback, options = {}) {
   try {
+    const threadId = typeof options === 'object' ? options.threadId : options;
+    const supergroupId = process.env.TELEGRAM_SUPERGROUP_ID || '-1004498264496';
+
+    if (supergroupId) {
+      const content = typeof msgCallback === 'function' ? msgCallback('Team') : msgCallback;
+      const basePayload = typeof content === 'string' ? { text: content } : { ...content };
+      const payload = {
+        chat_id: supergroupId,
+        parse_mode: 'Markdown',
+        ...basePayload
+      };
+      if (threadId) {
+        payload.message_thread_id = parseInt(threadId, 10);
+      }
+      await apiCall('sendMessage', payload);
+    }
+
     const ownersRes = await runQuery(`SELECT telegram_chat_id, name FROM public.owners WHERE active = true`);
     for (const owner of ownersRes.rows) {
-      if (owner.telegram_chat_id) {
+      if (owner.telegram_chat_id && owner.telegram_chat_id !== supergroupId) {
         const content = typeof msgCallback === 'function' ? msgCallback(owner.name || 'Owner') : msgCallback;
         if (typeof content === 'string') {
           await apiCall('sendMessage', { chat_id: owner.telegram_chat_id, text: content, parse_mode: 'Markdown' });
@@ -93,7 +110,7 @@ async function checkVipExpirations() {
             ]
           ]
         }
-      }));
+      }), { threadId: process.env.TG_THREAD_MEMBER_JOINS || 3 });
 
       console.log(`⚠️ Alerted owner: ${m.first_name} expiring on ${dateStr}`);
     }
@@ -132,7 +149,7 @@ async function checkVipExpirations() {
             ]
           ]
         }
-      }));
+      }), { threadId: process.env.TG_THREAD_MEMBER_JOINS || 3 });
 
       console.log(`🔴 Alerted owner: ${m.first_name} expired on ${dateStr}`);
     }
@@ -169,7 +186,10 @@ async function checkActiveSignalReminders() {
             ]
           ]
         }
-      }));
+      }), { threadId: process.env.TG_THREAD_SIGNALS || 2 });
+
+      console.log(`⚠️ Alerted owners for unresolved signal $${sig.symbol} (${sig.id})`);
+    }
 
       console.log(`⚠️ Alerted owners for unresolved signal $${sig.symbol} (${sig.id})`);
     }
