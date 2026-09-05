@@ -46,6 +46,18 @@ async function logActivity(eventType, creatorId, creatorName, platformId, messag
        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
       [logId, eventType, creatorId || null, creatorName || 'System', platformId || null, message]
     );
+
+    // Broadcast SLA warnings and system health alerts to System Logs topic (thread 5)
+    if (eventType && (eventType.includes('SLA') || eventType.includes('ERROR') || eventType.includes('WARNING') || eventType.includes('SYSTEM'))) {
+      const supergroupId = process.env.TELEGRAM_SUPERGROUP_ID || '-1004498264496';
+      const threadId = process.env.TG_THREAD_SYSTEM_LOGS || 5;
+      await apiCall('sendMessage', {
+        chat_id: supergroupId,
+        message_thread_id: parseInt(threadId, 10),
+        text: `🚨 <b>SYSTEM LOG [${eventType}]</b>\n\n<b>Actor:</b> ${creatorName || 'System'}\n<b>Log ID:</b> ${logId}\n\n${message}`,
+        parse_mode: 'HTML'
+      });
+    }
   } catch (err) {}
 }
 
@@ -96,11 +108,29 @@ async function getNextCreatorId() {
   }
 }
 
-async function broadcastToOwners(messageFn) {
+async function broadcastToOwners(messageFn, options = {}) {
   try {
+    const threadId = typeof options === 'object' ? options.threadId : options;
+    const defaultThreadId = threadId || process.env.TG_THREAD_MEMBER_JOINS || 3;
+    const supergroupId = process.env.TELEGRAM_SUPERGROUP_ID || '-1004498264496';
+
+    if (supergroupId) {
+      const content = typeof messageFn === 'function' ? messageFn('Team') : messageFn;
+      let payload = {};
+      if (typeof content === 'object' && content !== null) {
+        payload = { chat_id: supergroupId, parse_mode: 'Markdown', ...content };
+      } else {
+        payload = { chat_id: supergroupId, text: String(content), parse_mode: 'Markdown' };
+      }
+      if (defaultThreadId && defaultThreadId !== 1) {
+        payload.message_thread_id = parseInt(defaultThreadId, 10);
+      }
+      await apiCall('sendMessage', payload);
+    }
+
     const res = await runQuery(`SELECT telegram_chat_id, name FROM public.owners WHERE telegram_chat_id IS NOT NULL AND active = true`);
     for (const owner of res.rows) {
-      if (owner.telegram_chat_id) {
+      if (owner.telegram_chat_id && owner.telegram_chat_id !== supergroupId) {
         const content = typeof messageFn === 'function' ? messageFn(owner.name || 'Owner') : messageFn;
         let payload = {};
         if (typeof content === 'object' && content !== null) {
