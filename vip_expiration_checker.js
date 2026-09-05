@@ -191,9 +191,6 @@ async function checkActiveSignalReminders() {
       console.log(`⚠️ Alerted owners for unresolved signal $${sig.symbol} (${sig.id})`);
     }
 
-      console.log(`⚠️ Alerted owners for unresolved signal $${sig.symbol} (${sig.id})`);
-    }
-
     console.log(`✅ Active Signal Reminder Check Complete.`);
   } catch (err) {
     console.error('Error checking active signal reminders:', err);

@@ -71,22 +71,6 @@ async function getAllOwners() {
   }
 }
 
-async function broadcastToOwners(buildCardFn) {
-  try {
-    const owners = await getAllOwners();
-    for (const owner of owners) {
-      if (owner.telegram_chat_id) {
-        const text = buildCardFn(owner.name);
-        await apiCall('sendMessage', {
-          chat_id: owner.telegram_chat_id,
-          text: text,
-          parse_mode: 'Markdown'
-        });
-      }
-    }
-  } catch (err) {}
-}
-
 async function getCreatorByChatId(chatId) {
   try {
     const res = await runQuery(`SELECT * FROM public.creators WHERE telegram_chat_id = $1`, [chatId.toString()]);
@@ -352,7 +336,7 @@ async function dispatchBatch(batchNum, contentRows, creators, allCaptions, platf
     ownerCard += `📋 *Content Breakdown:*\n• 📝 Text: *${textCount}*\n• 🖼 Graphic: *${graphicCount}*\n• 📰 Article: *${articleCount}*\n\n`;
     ownerCard += `⏰ *Posting Window:* \`${defaultTimeEST}\``;
     return ownerCard;
-  });
+  }, { threadId: process.env.TG_THREAD_CONTENT_DISPATCHES || 4 });
 }
 
 async function checkOverdueSLA() {
@@ -400,7 +384,7 @@ async function checkOverdueSLA() {
         alert += `🎫 *Ticket:* \`${issueId}\`\n👤 *Creator:* ${task.creator_name} (\`${task.creator_id}\`)\n📱 *Platform:* ${task.platform_name || task.platform_id}\n\n`;
         alert += `⚡️ Ticket logged in CRM Issue Desk. SLA tracking frozen.`;
         return alert;
-      });
+      }, { threadId: process.env.TG_THREAD_SYSTEM_LOGS || 5 });
     }
   }
 }
